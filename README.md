@@ -33,21 +33,28 @@ without `dot`, erasing the install gap.
 
 ## Status
 
-Early scaffold. The custom SVG painter and the Graphviz layout engine are in
-place. They consume a graph-IR JSON file today; once chant ships `chant graph
---format ir` (chant#493) the IR type becomes a direct import and the agent loop
-lands. Tracked in chant#492 / chant#498.
+Wired to chant 0.10.0. pinhole shells `chant graph` for the graph IR
+(`--format ir`) and node positions (`--format layout`) and paints them with the
+custom SVG painter. The IR types are imported from `@intentius/chant`. Still to
+come: the theme system (chant#498) and the natural-language agent loop.
 
 ## Usage
 
 ```sh
 npm install
 npm run build
-pinhole render graph.json -o infra.svg
+pinhole render ./my-chant-project -o infra.svg --title "My infra"
 ```
 
-`graph.json` is a graph IR (the shape in `src/ir.ts`). The agent loop — natural
-language to chant source edits to re-render — is not built yet.
+`render` takes a chant project directory. Options mirror `chant graph`:
+
+```sh
+pinhole render ./infra --detail 1            # composites as single nodes
+pinhole render ./infra --lens blast:vpc --down   # focus on a node's dependents
+```
+
+Because pinhole renders chant's lint-gated IR, the picture is always valid infra.
+Graphviz (`dot`) must be installed for the layout step.
 
 ## Develop
 

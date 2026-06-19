@@ -1,5 +1,4 @@
-import type { GraphIR, IRNode } from "../ir.ts";
-import type { Layout } from "../layout/engine.ts";
+import type { GraphIR, IRNode, Layout } from "../ir.ts";
 import { Canvas, type Status } from "./svg.ts";
 
 const CARD_W = 180;
@@ -7,17 +6,19 @@ const CARD_H = 64;
 const MARGIN = 80;
 const TITLE_BAND = 90;
 
-/** Paint a graph IR into an SVG document, given precomputed layout positions. */
+/** Paint a graph IR into an SVG document, given chant's layout positions. */
 export function renderSvg(ir: GraphIR, layout: Layout, opts: { title?: string } = {}): string {
-  // Graphviz space is points with y growing upward. Map into a px canvas with a
-  // title band on top and y flipped so the graph reads top-to-bottom.
+  // chant's --format layout gives positions as an array of {id,x,y} in Graphviz
+  // space (y grows upward). Index them, then map into a px canvas with a title
+  // band on top and y flipped so the graph reads top-to-bottom.
+  const pos = new Map(layout.nodes.map((n) => [n.id, n]));
   const contentW = layout.width + CARD_W;
   const contentH = layout.height + CARD_H;
   const W = Math.ceil(contentW + MARGIN * 2);
   const H = Math.ceil(contentH + MARGIN * 2 + TITLE_BAND);
 
   const place = (id: string): { cx: number; cy: number } | undefined => {
-    const p = layout.nodes[id];
+    const p = pos.get(id);
     if (!p) return undefined;
     return {
       cx: MARGIN + p.x,
