@@ -9,6 +9,34 @@ const CARD_BASE = 52; // title + sub
 const ROW_H = 16; // per field row
 const MARGIN = 80;
 const TITLE_BAND = 90;
+const CARD_GAP = 28; // min empty space between adjacent cards
+const MAX_SCALE = 10; // guard against a degenerate near-coincident pair
+
+/**
+ * How much to stretch the layout's coordinate space so fixed-size cards don't
+ * overlap. Independent per-axis factors: a pair close on one axis needs clearance
+ * on the other. Only grows (never shrinks below 1), capped so a near-coincident
+ * pair can't blow the canvas up. Pure; exported for testing.
+ */
+export function fitScale(
+  nodes: Array<{ x: number; y: number }>,
+  needX: number,
+  needY: number,
+): { sx: number; sy: number } {
+  let sx = 1;
+  let sy = 1;
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      const dx = Math.abs(nodes[i].x - nodes[j].x);
+      const dy = Math.abs(nodes[i].y - nodes[j].y);
+      // Roughly same row → they need horizontal clearance.
+      if (dy < needY && dx > 1) sx = Math.min(MAX_SCALE, Math.max(sx, needX / dx));
+      // Roughly same column → they need vertical clearance.
+      if (dx < needX && dy > 1) sy = Math.min(MAX_SCALE, Math.max(sy, needY / dy));
+    }
+  }
+  return { sx, sy };
+}
 
 /** Per-node override of presentation (fields shown). */
 export interface NodeOverride {
@@ -42,13 +70,20 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
   // band on top and y flipped so the graph reads top-to-bottom.
   const pos = new Map(layout.nodes.map((n) => [n.id, n]));
   const maxCardH = CARD_BASE + 4 * ROW_H; // size the canvas for the tallest card
-  const W = Math.ceil(layout.width + CARD_W + MARGIN * 2);
-  const H = Math.ceil(layout.height + maxCardH + MARGIN * 2 + TITLE_BAND);
+  // dot lays out centers for its own small default node; pinhole paints big
+  // fixed cards on those centers, so neighbours collide. Stretch the coordinate
+  // space until the tightest conflicting pair clears a card footprint. Proper
+  // fix is feeding real node sizes into layout (chant-side) — see #16.
+  const { sx, sy } = fitScale(layout.nodes, CARD_W + CARD_GAP, maxCardH + CARD_GAP);
+  const scaledW = layout.width * sx;
+  const scaledH = layout.height * sy;
+  const W = Math.ceil(scaledW + CARD_W + MARGIN * 2);
+  const H = Math.ceil(scaledH + maxCardH + MARGIN * 2 + TITLE_BAND);
 
   const place = (id: string): { cx: number; cy: number } | undefined => {
     const p = pos.get(id);
     if (!p) return undefined;
-    return { cx: MARGIN + p.x, cy: MARGIN + TITLE_BAND + (layout.height - p.y) };
+    return { cx: MARGIN + p.x * sx, cy: MARGIN + TITLE_BAND + (scaledH - p.y * sy) };
   };
 
   const c = new Canvas(W, H, theme);

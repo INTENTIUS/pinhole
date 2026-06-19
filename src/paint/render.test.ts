@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { renderSvg } from "./render.ts";
+import { renderSvg, fitScale } from "./render.ts";
 import type { GraphIR, Layout } from "../ir.ts";
 
 const ir: GraphIR = {
@@ -62,5 +62,35 @@ describe("renderSvg node hooks", () => {
   it("keeps the data-node-id and the pulse class together when emphasized", () => {
     const svg = renderSvg(ir, layout, { animate: { pulse: ["vpc"] } });
     expect(svg).toMatch(/data-node-id="vpc" class="pin-pulse"/);
+  });
+});
+
+describe("fitScale", () => {
+  it("never shrinks (factors are >= 1)", () => {
+    const { sx, sy } = fitScale([{ x: 0, y: 0 }, { x: 1000, y: 1000 }], 208, 144);
+    expect(sx).toBe(1);
+    expect(sy).toBe(1);
+  });
+
+  it("spreads a tight row horizontally until cards clear", () => {
+    // three centers 130 apart on one row; need 208 of clearance
+    const row = [{ x: 0, y: 0 }, { x: 130, y: 0 }, { x: 260, y: 0 }];
+    const { sx, sy } = fitScale(row, 208, 144);
+    expect(sx).toBeCloseTo(208 / 130, 5);
+    expect(sy).toBe(1); // nothing stacked vertically
+    // after scaling, the gap between adjacent centers covers a card width
+    expect(130 * sx).toBeGreaterThanOrEqual(208);
+  });
+
+  it("spreads a tight column vertically", () => {
+    const col = [{ x: 0, y: 0 }, { x: 0, y: 100 }];
+    const { sx, sy } = fitScale(col, 208, 144);
+    expect(sy).toBeCloseTo(144 / 100, 5);
+    expect(sx).toBe(1);
+  });
+
+  it("caps the factor for a near-coincident pair", () => {
+    const { sx } = fitScale([{ x: 0, y: 0 }, { x: 2, y: 0 }], 208, 144);
+    expect(sx).toBe(10); // MAX_SCALE, not 104
   });
 });
