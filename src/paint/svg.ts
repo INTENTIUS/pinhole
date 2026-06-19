@@ -9,6 +9,7 @@
  * lets a browser switch themes live. See theme.ts.
  */
 import { type Theme, type ThemeTokenName, v, defs } from "../theme.ts";
+import type { Field } from "../labels.ts";
 
 /** Drives the color of a node card. */
 export type Status = "neutral" | "accent" | "good" | "warn" | "selected";
@@ -65,9 +66,8 @@ export class Canvas {
     }
   }
 
-  /** A rounded status card with an accent bar, optional type icon, title and
-   * sub-label. `icon` is monochrome glyph geometry (0 0 24 24); it's stroked in
-   * a theme color so it recolors with the theme. */
+  /** Portable status card (native SVG text): accent bar, type icon, title,
+   * sub-label, and field rows. Works as a static .svg / `<img>` / GitHub. */
   nodeCard(
     x: number,
     y: number,
@@ -77,18 +77,59 @@ export class Canvas {
     title: string,
     sub: string,
     icon?: string,
+    fields: Field[] = [],
   ): void {
     const t = statusTokens(s);
     const textX = icon ? x + 46 : x + 16;
     this.body += `<g>`;
     this.body += `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="12" fill="${this.c(t.fill)}" stroke="${this.c(t.stroke)}" stroke-width="1.2"/>`;
     this.body += `<rect x="${x}" y="${y}" width="4" height="${h}" rx="2" fill="${this.c(t.bar)}"/>`;
-    if (icon) this.body += this.glyph(icon, x + 14, y + (h - 22) / 2, 22);
+    if (icon) this.body += this.glyph(icon, x + 14, y + 15, 22);
     this.body += `<text x="${textX}" y="${y + 26}" fill="${this.c("text")}" font-size="15" font-weight="700">${esc(title)}</text>`;
     if (sub) {
       this.body += `<text x="${textX}" y="${y + 44}" fill="${this.c("textFaint")}" font-size="11">${esc(sub)}</text>`;
     }
+    fields.forEach((f, i) => {
+      const fy = y + 64 + i * 16;
+      this.body += `<text x="${x + 16}" y="${fy}" font-size="11">`;
+      this.body += `<tspan fill="${this.c("textFaint")}">${esc(f.label)}: </tspan>`;
+      this.body += `<tspan fill="${this.c("textMuted")}">${esc(f.value)}</tspan>`;
+      this.body += `</text>`;
+    });
     this.body += `</g>`;
+  }
+
+  /** Rich status card using `<foreignObject>` HTML — fields as a list, themed
+   * via the same `--pin-*` vars. Browser/inline only; never put in the portable
+   * export. */
+  nodeCardRich(
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    s: Status,
+    title: string,
+    sub: string,
+    fields: Field[] = [],
+  ): void {
+    const t = statusTokens(s);
+    const items = fields
+      .map(
+        (f) =>
+          `<li style="display:flex;gap:6px;margin:2px 0"><span style="color:${this.c("textFaint")}">${esc(f.label)}</span>` +
+          `<span style="color:${this.c("textMuted")}">${esc(f.value)}</span></li>`,
+      )
+      .join("");
+    this.body +=
+      `<foreignObject x="${x}" y="${y}" width="${w}" height="${h}">` +
+      `<div xmlns="http://www.w3.org/1999/xhtml" style="box-sizing:border-box;height:100%;` +
+      `border-radius:12px;border:1.2px solid ${this.c(t.stroke)};border-left:4px solid ${this.c(t.bar)};` +
+      `background:${this.c(t.fill)};padding:8px 12px;` +
+      `font:13px 'Inter',system-ui,sans-serif;overflow:hidden">` +
+      `<div style="color:${this.c("text")};font-weight:700;font-size:15px">${esc(title)}</div>` +
+      (sub ? `<div style="color:${this.c("textFaint")};font-size:11px">${esc(sub)}</div>` : "") +
+      (items ? `<ul style="list-style:none;margin:6px 0 0;padding:0;font-size:11px">${items}</ul>` : "") +
+      `</div></foreignObject>`;
   }
 
   /** Place a monochrome glyph (0 0 24 24 geometry) at (gx,gy), scaled to `size`,

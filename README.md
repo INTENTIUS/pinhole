@@ -65,6 +65,12 @@ presentation pack → generic category (inferred from the resource kind) →
 default. The built-in glyphs are monochrome line icons that recolor with the
 theme. Provider-authentic (brand) icon packs are a separate, opt-in concern.
 
+Node bodies show a few fields from the IR attrs (chosen by a template: per-node
+override → lexicon pack → default scalar attrs). The default **portable** output
+draws them as native SVG text — works as a static image and on GitHub. `--rich`
+switches to `<foreignObject>` HTML labels (lists, richer layout) for inlining in
+a browser; don't use it for static export.
+
 Because pinhole renders chant's lint-gated IR, the picture is always valid infra.
 Graphviz (`dot`) must be installed for the layout step.
 

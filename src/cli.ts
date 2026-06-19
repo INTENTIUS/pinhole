@@ -6,10 +6,12 @@ import { renderSvg } from "./paint/render.ts";
 const USAGE = `pinhole — agentic infra diagrammer
 
 Usage:
-  pinhole render <project-dir> [-o out.svg] [--title <text>] [--theme <name>]
+  pinhole render <project-dir> [-o out.svg] [--title <text>] [--theme <name>] [--rich]
                                [--detail 0..3] [--lens <kind>:<target>] [--up] [--down]
 
 Themes: dark (default), light, blueprint.
+--rich emits foreignObject HTML labels (browser/inline only); default is portable
+native-SVG text that works as a static image and on GitHub.
 
 Renders a chant project to SVG. pinhole shells \`chant graph\` for the graph IR
 and node positions (\`--format ir\` / \`--format layout\`) and paints them, so the
@@ -37,6 +39,7 @@ async function runRender(args: string[]): Promise<number> {
   let out: string | undefined;
   let title: string | undefined;
   let themeName: string | undefined;
+  let tier: "portable" | "rich" = "portable";
   const opts: GraphOptions = {};
 
   for (let i = 0; i < args.length; i++) {
@@ -44,6 +47,7 @@ async function runRender(args: string[]): Promise<number> {
     if (a === "-o" || a === "--out") out = args[++i];
     else if (a === "--title") title = args[++i];
     else if (a === "--theme") themeName = args[++i];
+    else if (a === "--rich") tier = "rich";
     else if (a === "--detail") opts.detail = Number(args[++i]);
     else if (a === "--lens") opts.lens = args[++i];
     else if (a === "--up") opts.up = true;
@@ -60,7 +64,7 @@ async function runRender(args: string[]): Promise<number> {
     const theme = getTheme(themeName);
     // Same options to both calls so the IR and layout node sets line up.
     const [ir, layout] = await Promise.all([graphIr(dir, opts), graphLayout(dir, opts)]);
-    const svg = renderSvg(ir, layout, { title, theme });
+    const svg = renderSvg(ir, layout, { title, theme, tier });
     if (out) {
       await writeFile(out, svg);
       process.stderr.write(`pinhole: wrote ${out}\n`);
