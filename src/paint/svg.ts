@@ -65,17 +65,40 @@ export class Canvas {
     }
   }
 
-  /** A rounded status card with an accent bar, title and sub-label. */
-  nodeCard(x: number, y: number, w: number, h: number, s: Status, title: string, sub: string): void {
+  /** A rounded status card with an accent bar, optional type icon, title and
+   * sub-label. `icon` is monochrome glyph geometry (0 0 24 24); it's stroked in
+   * a theme color so it recolors with the theme. */
+  nodeCard(
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    s: Status,
+    title: string,
+    sub: string,
+    icon?: string,
+  ): void {
     const t = statusTokens(s);
+    const textX = icon ? x + 46 : x + 16;
     this.body += `<g>`;
     this.body += `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="12" fill="${this.c(t.fill)}" stroke="${this.c(t.stroke)}" stroke-width="1.2"/>`;
     this.body += `<rect x="${x}" y="${y}" width="4" height="${h}" rx="2" fill="${this.c(t.bar)}"/>`;
-    this.body += `<text x="${x + 16}" y="${y + 26}" fill="${this.c("text")}" font-size="15" font-weight="700">${esc(title)}</text>`;
+    if (icon) this.body += this.glyph(icon, x + 14, y + (h - 22) / 2, 22);
+    this.body += `<text x="${textX}" y="${y + 26}" fill="${this.c("text")}" font-size="15" font-weight="700">${esc(title)}</text>`;
     if (sub) {
-      this.body += `<text x="${x + 16}" y="${y + 44}" fill="${this.c("textFaint")}" font-size="11">${esc(sub)}</text>`;
+      this.body += `<text x="${textX}" y="${y + 44}" fill="${this.c("textFaint")}" font-size="11">${esc(sub)}</text>`;
     }
     this.body += `</g>`;
+  }
+
+  /** Place a monochrome glyph (0 0 24 24 geometry) at (gx,gy), scaled to `size`,
+   * stroked in the theme's text color. */
+  private glyph(body: string, gx: number, gy: number, size: number): string {
+    const k = size / 24;
+    return (
+      `<g transform="translate(${gx} ${gy}) scale(${k})" fill="none" stroke="${this.c("textFaint")}" ` +
+      `stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${body}</g>`
+    );
   }
 
   /** A bezier path between two points, in the theme's edge color. */
