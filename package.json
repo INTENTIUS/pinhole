@@ -27,5 +27,13 @@
     "esbuild": "^0.28.0",
     "typescript": "^5.9.3",
     "vitest": "^4.1.9"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/INTENTIUS/pinhole.git"
+  },
+  "bugs": {
+    "url": "https://github.com/INTENTIUS/pinhole/issues"
+  },
+  "homepage": "https://github.com/INTENTIUS/pinhole#readme"
 }
