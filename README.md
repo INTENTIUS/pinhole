@@ -53,7 +53,12 @@ pinhole render ./my-chant-project -o infra.svg --title "My infra"
 ```sh
 pinhole render ./infra --detail 1            # composites as single nodes
 pinhole render ./infra --lens blast:vpc --down   # focus on a node's dependents
+pinhole render ./infra --theme blueprint     # dark (default) | light | blueprint
 ```
+
+Themes are CSS-variable driven: the chosen theme is baked as fallbacks (so a
+standalone `.svg` / `<img>` / GitHub renders right), and a `:root` block lets a
+browser flip `--pin-*` variables live when the SVG is inlined.
 
 Because pinhole renders chant's lint-gated IR, the picture is always valid infra.
 Graphviz (`dot`) must be installed for the layout step.
