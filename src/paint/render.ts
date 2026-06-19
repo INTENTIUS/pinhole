@@ -73,10 +73,10 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
     const sub = `${node.kind} · ${node.lexicon}`;
     const emphasize = pulse.has(node.id);
     if (tier === "rich") {
-      c.nodeCardRich(x, y, CARD_W, h, status, node.id, sub, fields, emphasize);
+      c.nodeCardRich(x, y, CARD_W, h, status, node.id, sub, fields, emphasize, node.id);
     } else {
       const glyph = resolveGlyph({ lexicon: node.lexicon, kind: node.kind });
-      c.nodeCard(x, y, CARD_W, h, status, node.id, sub, glyph.body, fields, emphasize);
+      c.nodeCard(x, y, CARD_W, h, status, node.id, sub, glyph.body, fields, emphasize, node.id);
     }
   }
 

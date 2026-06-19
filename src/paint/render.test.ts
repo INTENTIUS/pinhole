@@ -49,3 +49,18 @@ describe("renderSvg animation", () => {
     expect(svg).not.toContain("foreignObject");
   });
 });
+
+describe("renderSvg node hooks", () => {
+  it("stamps data-node-id on every node, in both tiers", () => {
+    for (const tier of ["portable", "rich"] as const) {
+      const svg = renderSvg(ir, layout, { tier });
+      expect(svg).toContain('data-node-id="vpc"');
+      expect(svg).toContain('data-node-id="subnet"');
+    }
+  });
+
+  it("keeps the data-node-id and the pulse class together when emphasized", () => {
+    const svg = renderSvg(ir, layout, { animate: { pulse: ["vpc"] } });
+    expect(svg).toMatch(/data-node-id="vpc" class="pin-pulse"/);
+  });
+});
