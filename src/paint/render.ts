@@ -1,5 +1,6 @@
 import type { GraphIR, IRNode, Layout } from "../ir.ts";
 import { getTheme, type Theme } from "../theme.ts";
+import { resolveGlyph } from "../icons.ts";
 import { Canvas, type Status } from "./svg.ts";
 
 const CARD_W = 180;
@@ -49,7 +50,8 @@ export function renderSvg(
     if (!p) continue;
     const x = Math.round(p.cx - CARD_W / 2);
     const y = Math.round(p.cy - CARD_H / 2);
-    c.nodeCard(x, y, CARD_W, CARD_H, statusFor(node), node.id, `${node.kind} · ${node.lexicon}`);
+    const glyph = resolveGlyph({ lexicon: node.lexicon, kind: node.kind });
+    c.nodeCard(x, y, CARD_W, CARD_H, statusFor(node), node.id, `${node.kind} · ${node.lexicon}`, glyph.body);
   }
 
   return c.toString();

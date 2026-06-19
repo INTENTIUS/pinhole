@@ -60,6 +60,11 @@ Themes are CSS-variable driven: the chosen theme is baked as fallbacks (so a
 standalone `.svg` / `<img>` / GitHub renders right), and a `:root` block lets a
 browser flip `--pin-*` variables live when the SVG is inlined.
 
+Nodes get a type icon, resolved through a chain: per-node override → lexicon
+presentation pack → generic category (inferred from the resource kind) →
+default. The built-in glyphs are monochrome line icons that recolor with the
+theme. Provider-authentic (brand) icon packs are a separate, opt-in concern.
+
 Because pinhole renders chant's lint-gated IR, the picture is always valid infra.
 Graphviz (`dot`) must be installed for the layout step.
 

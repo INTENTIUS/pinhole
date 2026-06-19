@@ -11,5 +11,15 @@ export {
   v,
   defs,
 } from "./theme.ts";
+export {
+  type Glyph,
+  type PresentationPack,
+  GENERIC_GLYPHS,
+  categoryForKind,
+  resolveGlyph,
+  registerPack,
+  getPack,
+  clearPacks,
+} from "./icons.ts";
 export { Canvas, type Status } from "./paint/svg.ts";
 export { renderSvg } from "./paint/render.ts";
