@@ -13,6 +13,10 @@ Themes: dark (default), light, blueprint.
 --rich emits foreignObject HTML labels (browser/inline only); default is portable
 native-SVG text that works as a static image and on GitHub.
 
+Animation (CSS, reduced-motion guarded; animates in a browser, still elsewhere):
+  --highlight <id,id>  pulse those nodes (emphasis)
+  --flow               animate flow direction along edges
+
 Renders a chant project to SVG. pinhole shells \`chant graph\` for the graph IR
 and node positions (\`--format ir\` / \`--format layout\`) and paints them, so the
 picture is always lint-clean infra. Graphviz (\`dot\`) must be installed for the
@@ -40,6 +44,8 @@ async function runRender(args: string[]): Promise<number> {
   let title: string | undefined;
   let themeName: string | undefined;
   let tier: "portable" | "rich" = "portable";
+  let pulse: string[] | undefined;
+  let flow = false;
   const opts: GraphOptions = {};
 
   for (let i = 0; i < args.length; i++) {
@@ -48,6 +54,8 @@ async function runRender(args: string[]): Promise<number> {
     else if (a === "--title") title = args[++i];
     else if (a === "--theme") themeName = args[++i];
     else if (a === "--rich") tier = "rich";
+    else if (a === "--highlight") pulse = (args[++i] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    else if (a === "--flow") flow = true;
     else if (a === "--detail") opts.detail = Number(args[++i]);
     else if (a === "--lens") opts.lens = args[++i];
     else if (a === "--up") opts.up = true;
@@ -64,7 +72,7 @@ async function runRender(args: string[]): Promise<number> {
     const theme = getTheme(themeName);
     // Same options to both calls so the IR and layout node sets line up.
     const [ir, layout] = await Promise.all([graphIr(dir, opts), graphLayout(dir, opts)]);
-    const svg = renderSvg(ir, layout, { title, theme, tier });
+    const svg = renderSvg(ir, layout, { title, theme, tier, animate: { pulse, flow } });
     if (out) {
       await writeFile(out, svg);
       process.stderr.write(`pinhole: wrote ${out}\n`);

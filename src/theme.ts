@@ -100,13 +100,30 @@ export function v(theme: Theme, token: ThemeTokenName): string {
   return `var(--pin-${token}, ${theme.tokens[token]})`;
 }
 
+/**
+ * Ambient animation CSS — semantic motion classes (#9). Entirely inside a
+ * `prefers-reduced-motion: no-preference` guard, so motion is off for users who
+ * opt out (and in print). CSS `@keyframes` animate even when the SVG is loaded
+ * as `<img>` in a browser; static rasterizers / GitHub show the still frame.
+ *
+ * - `pin-pulse`  — emphasis (focus / lens / blast / diff scope)
+ * - `pin-flow`   — flow direction along an edge (a marching dash)
+ */
+const ANIMATION_CSS =
+  `@media (prefers-reduced-motion: no-preference){` +
+  `@keyframes pin-pulse{0%,100%{opacity:1}50%{opacity:.5}}` +
+  `.pin-pulse{animation:pin-pulse 1.6s ease-in-out infinite}` +
+  `@keyframes pin-flow{to{stroke-dashoffset:-20}}` +
+  `.pin-flow{stroke-dasharray:4 6;animation:pin-flow .9s linear infinite}` +
+  `}`;
+
 /** The shared `<defs>`: a `:root` block (live theming) plus the bg gradient and
  * dot pattern, all referencing the tokens. */
 export function defs(theme: Theme): string {
   const root = TOKEN_NAMES.map((t) => `--pin-${t}:${theme.tokens[t]};`).join("");
   return (
     `<defs>` +
-    `<style>:root{${root}}</style>` +
+    `<style>:root{${root}}${ANIMATION_CSS}</style>` +
     `<linearGradient id="pin-bg" x1="0" y1="0" x2="0" y2="1">` +
     `<stop offset="0" stop-color="${v(theme, "bg0")}"/>` +
     `<stop offset="1" stop-color="${v(theme, "bg1")}"/>` +
