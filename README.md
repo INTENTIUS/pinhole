@@ -2,6 +2,8 @@
 
 **An agentic infra diagrammer built on [chant](https://github.com/INTENTIUS/chant).**
 
+Published as [`@intentius/pinhole`](https://www.npmjs.com/package/@intentius/pinhole); the CLI is `pinhole`.
+
 pinhole turns chant's resolved infrastructure graph into diagrams. You describe a
 few resources, chant expands composites and resolves the dependency graph, and
 pinhole paints it — gated by lint at every step, so the picture is always valid
