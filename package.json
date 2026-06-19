@@ -1,0 +1,31 @@
+{
+  "name": "pinhole",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Agentic infra diagrammer — paints chant's graph IR into diagrams, gated by lint at every step",
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "pinhole": "./bin/pinhole.js"
+  },
+  "files": [
+    "bin",
+    "dist"
+  ],
+  "scripts": {
+    "tsc": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --outfile=dist/cli.js && chmod +x dist/cli.js",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@intentius/chant": "^0.8.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.28.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.9"
+  }
+}
