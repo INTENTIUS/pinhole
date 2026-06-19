@@ -21,5 +21,6 @@ export {
   getPack,
   clearPacks,
 } from "./icons.ts";
+export { type Field, MAX_FIELDS, defaultFields, resolveFields } from "./labels.ts";
 export { Canvas, type Status } from "./paint/svg.ts";
-export { renderSvg } from "./paint/render.ts";
+export { renderSvg, type RenderOptions, type NodeOverride } from "./paint/render.ts";

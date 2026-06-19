@@ -62,11 +62,13 @@ export function categoryForKind(kind: string): string {
   return "generic";
 }
 
-/** A per-lexicon presentation pack: maps a resource kind to an icon category. */
+/** A per-lexicon presentation pack: icon mapping and optional label fields. */
 export interface PresentationPack {
   lexicon: string;
   /** Return a glyph/category name for a kind, or undefined to fall through. */
   iconFor(kind: string): string | undefined;
+  /** Pick label fields for a node, or undefined to fall through to the default. */
+  fields?(node: { kind: string; lexicon: string; attrs: Record<string, unknown> }): import("./labels.ts").Field[] | undefined;
 }
 
 const packs = new Map<string, PresentationPack>();
