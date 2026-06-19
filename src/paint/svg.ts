@@ -78,10 +78,11 @@ export class Canvas {
     sub: string,
     icon?: string,
     fields: Field[] = [],
+    emphasize = false,
   ): void {
     const t = statusTokens(s);
     const textX = icon ? x + 46 : x + 16;
-    this.body += `<g>`;
+    this.body += emphasize ? `<g class="pin-pulse">` : `<g>`;
     this.body += `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="12" fill="${this.c(t.fill)}" stroke="${this.c(t.stroke)}" stroke-width="1.2"/>`;
     this.body += `<rect x="${x}" y="${y}" width="4" height="${h}" rx="2" fill="${this.c(t.bar)}"/>`;
     if (icon) this.body += this.glyph(icon, x + 14, y + 15, 22);
@@ -111,8 +112,10 @@ export class Canvas {
     title: string,
     sub: string,
     fields: Field[] = [],
+    emphasize = false,
   ): void {
     const t = statusTokens(s);
+    const cls = emphasize ? ` class="pin-pulse"` : "";
     const items = fields
       .map(
         (f) =>
@@ -121,7 +124,7 @@ export class Canvas {
       )
       .join("");
     this.body +=
-      `<foreignObject x="${x}" y="${y}" width="${w}" height="${h}">` +
+      `<foreignObject x="${x}" y="${y}" width="${w}" height="${h}"${cls}>` +
       `<div xmlns="http://www.w3.org/1999/xhtml" style="box-sizing:border-box;height:100%;` +
       `border-radius:12px;border:1.2px solid ${this.c(t.stroke)};border-left:4px solid ${this.c(t.bar)};` +
       `background:${this.c(t.fill)};padding:8px 12px;` +
@@ -142,9 +145,11 @@ export class Canvas {
     );
   }
 
-  /** A bezier path between two points, in the theme's edge color. */
-  edge(d: string, width: number): void {
-    this.body += `<path d="${esc(d)}" fill="none" stroke="${this.c("edge")}" stroke-width="${width}" stroke-linecap="round"/>`;
+  /** A bezier path between two points, in the theme's edge color. With `flow`,
+   * a marching dash animates direction along the edge. */
+  edge(d: string, width: number, flow = false): void {
+    const cls = flow ? ` class="pin-flow"` : "";
+    this.body += `<path d="${esc(d)}" fill="none" stroke="${this.c("edge")}" stroke-width="${width}" stroke-linecap="round"${cls}/>`;
   }
 
   toString(): string {

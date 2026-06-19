@@ -22,12 +22,21 @@ export interface RenderOptions {
   tier?: "portable" | "rich";
   /** Per-node presentation overrides, keyed by node id. */
   overrides?: Record<string, NodeOverride>;
+  /** Ambient animation (semantic motion; reduced-motion guarded in CSS). */
+  animate?: {
+    /** Node ids to emphasize (pulse). */
+    pulse?: string[];
+    /** Animate flow direction along all edges. */
+    flow?: boolean;
+  };
 }
 
 /** Paint a graph IR into an SVG document, given chant's layout positions. */
 export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {}): string {
   const theme = opts.theme ?? getTheme();
   const tier = opts.tier ?? "portable";
+  const pulse = new Set(opts.animate?.pulse ?? []);
+  const flow = opts.animate?.flow ?? false;
   // chant's --format layout gives positions as an array of {id,x,y} in Graphviz
   // space (y grows upward). Index them, then map into a px canvas with a title
   // band on top and y flipped so the graph reads top-to-bottom.
@@ -50,7 +59,7 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
     const a = place(e.from);
     const b = place(e.to);
     if (!a || !b) continue;
-    c.edge(`M ${a.cx} ${a.cy} C ${a.cx} ${(a.cy + b.cy) / 2}, ${b.cx} ${(a.cy + b.cy) / 2}, ${b.cx} ${b.cy}`, 1.4);
+    c.edge(`M ${a.cx} ${a.cy} C ${a.cx} ${(a.cy + b.cy) / 2}, ${b.cx} ${(a.cy + b.cy) / 2}, ${b.cx} ${b.cy}`, 1.4, flow);
   }
 
   for (const node of ir.nodes) {
@@ -62,11 +71,12 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
     const y = Math.round(p.cy - h / 2);
     const status = statusFor(node);
     const sub = `${node.kind} · ${node.lexicon}`;
+    const emphasize = pulse.has(node.id);
     if (tier === "rich") {
-      c.nodeCardRich(x, y, CARD_W, h, status, node.id, sub, fields);
+      c.nodeCardRich(x, y, CARD_W, h, status, node.id, sub, fields, emphasize);
     } else {
       const glyph = resolveGlyph({ lexicon: node.lexicon, kind: node.kind });
-      c.nodeCard(x, y, CARD_W, h, status, node.id, sub, glyph.body, fields);
+      c.nodeCard(x, y, CARD_W, h, status, node.id, sub, glyph.body, fields, emphasize);
     }
   }
 

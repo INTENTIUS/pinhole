@@ -71,6 +71,11 @@ draws them as native SVG text — works as a static image and on GitHub. `--rich
 switches to `<foreignObject>` HTML labels (lists, richer layout) for inlining in
 a browser; don't use it for static export.
 
+Ambient animation is opt-in and semantic: `--highlight <id,…>` pulses nodes
+(emphasis), `--flow` marches a dash along edges (flow direction). It's CSS,
+guarded by `prefers-reduced-motion`, so it animates in a browser and shows a
+still frame in static exports / on GitHub.
+
 Because pinhole renders chant's lint-gated IR, the picture is always valid infra.
 Graphviz (`dot`) must be installed for the layout step.
 
