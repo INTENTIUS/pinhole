@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { roleForKind, renderContainment, containmentNotes, renderContainmentApp } from "./containment.ts";
+import { roleForKind, renderContainment, containmentNotes, renderContainmentApp, subtitleFor } from "./containment.ts";
 import type { GraphIR } from "./ir.ts";
 
 describe("roleForKind", () => {
@@ -113,6 +113,34 @@ describe("topology — incidental detection from relationship shape", () => {
   it("keeps hubs and multi-dependency subjects (alb, service)", () => {
     expect(t).toContain('data-node-id="alb"');
     expect(t).toContain('data-node-id="svc"');
+  });
+});
+
+describe("subtitleFor — enriched place info-bar", () => {
+  const enriched: GraphIR = {
+    nodes: [
+      { id: "vpc", kind: "AWS::EC2::VPC", lexicon: "aws", attrs: { CidrBlock: "10.0.0.0/16", Region: "us-east-1" } },
+      { id: "snA", kind: "AWS::EC2::Subnet", lexicon: "aws", attrs: { AvailabilityZone: "us-east-1a" } },
+      { id: "snB", kind: "AWS::EC2::Subnet", lexicon: "aws", attrs: { AvailabilityZone: "us-east-1b" } },
+    ],
+    edges: [],
+    groups: {},
+  };
+
+  it("carries CIDR, AZ spread, and region beyond the bare CIDR", () => {
+    const sub = subtitleFor("vpc", enriched)!;
+    expect(sub).toContain("10.0.0.0/16");
+    expect(sub).toContain("2 AZs"); // distinct AZs across the subnets
+    expect(sub).toContain("us-east-1");
+  });
+
+  it("shows a subnet's own AZ", () => {
+    expect(subtitleFor("snA", enriched)).toContain("us-east-1a");
+  });
+
+  it("returns nothing for a node with no place attrs", () => {
+    const bare: GraphIR = { nodes: [{ id: "x", kind: "AWS::EC2::VPC", lexicon: "aws", attrs: {} }], edges: [], groups: {} };
+    expect(subtitleFor("x", bare)).toBeUndefined();
   });
 });
 
