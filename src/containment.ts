@@ -140,9 +140,11 @@ function analyze(ir: GraphIR, focus: Focus = "app"): Analysis {
     return undefined;
   };
 
+  // Nest everything into the nearest place it lives in — including secondary
+  // places (a subnet nests in its VPC; in network focus an instance nests in its
+  // subnet). The top place (the VPC) has no home, so it stays a root.
   const parent: Record<string, string> = {};
   for (const id of kept) {
-    if (role[id] === "place") continue; // places (the VPC) are the containers
     const h = homeOf(id);
     if (h && h !== id) parent[id] = h;
   }
