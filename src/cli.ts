@@ -4,6 +4,7 @@ import { getTheme } from "./theme.ts";
 import { renderSvg, cardSizes } from "./paint/render.ts";
 import { renderHtml } from "./html.ts";
 import { renderMorphHtml, type MorphView } from "./morph.ts";
+import { renderContainment } from "./containment.ts";
 
 const USAGE = `pinhole — agentic infra diagrammer
 
@@ -20,6 +21,9 @@ the full name and attrs come from hover and the click inspector.
 --morph (with --html) writes a multi-view artifact that morphs between detail
 tiers — a composite expands into its members in place, shared nodes keep their
 identity. Needs at least two distinct tiers.
+--containment (experimental) drops low-signal plumbing and renders places (VPC,
+subnet) as nested bounding boxes with their resources inside; only dependency
+refs stay as lines.
 
 --html writes a self-contained, offline interactive artifact: the SVG inlined,
 plus a live theme switcher and hover/click inspection of node attrs. The plain
@@ -59,6 +63,7 @@ async function runRender(args: string[]): Promise<number> {
   let tier: "portable" | "rich" = "portable";
   let style: "card" | "icon" = "card";
   let morph = false;
+  let containment = false;
   let pulse: string[] | undefined;
   let flow = false;
   const opts: GraphOptions = {};
@@ -72,6 +77,7 @@ async function runRender(args: string[]): Promise<number> {
     else if (a === "--rich") tier = "rich";
     else if (a === "--icon" || a === "--icons") style = "icon";
     else if (a === "--morph") morph = true;
+    else if (a === "--containment" || a === "--boxes") containment = true;
     else if (a === "--highlight") pulse = (args[++i] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
     else if (a === "--flow") flow = true;
     else if (a === "--detail") opts.detail = Number(args[++i]);
@@ -107,8 +113,17 @@ async function runRender(args: string[]): Promise<number> {
     // IR first so we can measure each node's card; then lay out with those sizes
     // (same options, so the IR and layout node sets line up) and paint.
     const ir = await graphIr(dir, opts);
-    const layout = await graphLayout(dir, opts, cardSizes(ir, { style }));
-    const svg = renderSvg(ir, layout, { title, theme, tier, style, animate: { pulse, flow } });
+    // Containment view does its own salience filter + nested-box layout (no chant
+    // layout needed); everything else goes through chant's size-aware layout.
+    const svg = containment
+      ? renderContainment(ir, { title, theme })
+      : renderSvg(ir, await graphLayout(dir, opts, cardSizes(ir, { style })), {
+          title,
+          theme,
+          tier,
+          style,
+          animate: { pulse, flow },
+        });
     if (html) {
       await writeFile(html, renderHtml(ir, svg, { title, theme }));
       process.stderr.write(`pinhole: wrote ${html}\n`);
