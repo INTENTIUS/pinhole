@@ -55,23 +55,61 @@ function chantBin(): string {
   throw new Error("could not locate the @intentius/chant bin");
 }
 
-function runChant(args: string[], input?: string): Promise<string> {
+/** Result of a chant invocation that doesn't throw on a non-zero exit — used by
+ * the gate, where a failing exit is data (the source is dirty), not an error. */
+export interface ChantRun {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+
+/** Spawn chant and resolve with its exit code + streams, never rejecting on a
+ * non-zero exit (only on a spawn failure). */
+export function runChantRaw(args: string[], input?: string): Promise<ChantRun> {
   return new Promise((resolve, reject) => {
     const proc = spawn(chantBin(), args, { stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"] });
-    let out = "";
-    let err = "";
-    proc.stdout!.on("data", (d) => (out += d));
-    proc.stderr!.on("data", (d) => (err += d));
+    let stdout = "";
+    let stderr = "";
+    proc.stdout!.on("data", (d) => (stdout += d));
+    proc.stderr!.on("data", (d) => (stderr += d));
     proc.on("error", reject);
-    proc.on("close", (code) => {
-      if (code === 0) resolve(out);
-      else reject(new Error(`chant graph exited ${code}: ${err.trim() || out.trim()}`));
-    });
+    proc.on("close", (code) => resolve({ code: code ?? 1, stdout, stderr }));
     if (input !== undefined) {
       proc.stdin!.write(input);
       proc.stdin!.end();
     }
   });
+}
+
+function runChant(args: string[], input?: string): Promise<string> {
+  return runChantRaw(args, input).then(({ code, stdout, stderr }) => {
+    if (code === 0) return stdout;
+    throw new Error(`chant ${args[0]} exited ${code}: ${stderr.trim() || stdout.trim()}`);
+  });
+}
+
+/** A chant lint report. `ok` mirrors chant's exit (clean source → true).
+ * `diagnostics` is chant's `--format json` payload, passed through unreshaped so
+ * the gate's verdict is chant's, not pinhole's reinterpretation. */
+export interface LintReport {
+  ok: boolean;
+  diagnostics: unknown;
+  /** chant's default (stylish) rendering, for human output. */
+  stylish: string;
+}
+
+/** Run the lint gate. This is the same check that gates `chant graph` (and thus
+ * every rendered diagram): clean source lints, exits 0, and renders. */
+export async function lint(projectDir: string): Promise<LintReport> {
+  const json = await runChantRaw(["lint", projectDir, "--format", "json"]);
+  let diagnostics: unknown = [];
+  try {
+    diagnostics = JSON.parse(json.stdout || "[]");
+  } catch {
+    diagnostics = []; // non-JSON on stdout (shouldn't happen) — fall back to the exit code
+  }
+  const human = await runChantRaw(["lint", projectDir]);
+  return { ok: json.code === 0, diagnostics, stylish: (human.stdout + human.stderr).trim() };
 }
 
 /** Get the graph IR for a chant project. */

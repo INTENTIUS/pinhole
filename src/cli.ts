@@ -1,16 +1,24 @@
 import { writeFile } from "node:fs/promises";
-import { graphIr, graphLayout, type GraphOptions } from "./chant.ts";
+import { graphIr, graphLayout, lint, type GraphOptions } from "./chant.ts";
 import { getTheme } from "./theme.ts";
 import { renderSvg, cardSizes } from "./paint/render.ts";
 import { renderHtml } from "./html.ts";
 import { renderMorphHtml, type MorphView } from "./morph.ts";
 import { renderContainment, renderContainmentApp, type Focus } from "./containment.ts";
+import { summarizeIr, describeText } from "./inspect.ts";
+import { GUIDE } from "./guide.ts";
 
 const USAGE = `pinhole — agentic infra diagrammer
 
+pinhole is a tool any agent (or human) drives: edit chant source, then validate
+and render. Run \`pinhole guide\` for the agent-facing workflow.
+
 Usage:
+  pinhole describe <project-dir> [--json]      current nodes, edges, composites
+  pinhole check    <project-dir> [--json]      run the lint gate (exit 0 = clean)
+  pinhole guide                                how an agent drives pinhole
   pinhole render <project-dir> [-o out.svg] [--html out.html] [--title <text>]
-                               [--theme <name>] [--rich] [--icon]
+                               [--theme <name>] [--rich] [--icon] [--json]
                                [--detail 0..3] [--lens <kind>:<target>] [--up] [--down]
 
 Themes: dark (default), light, blueprint, aws.
@@ -51,9 +59,78 @@ export async function run(argv: string[]): Promise<number> {
     return 0;
   }
   if (cmd === "render") return runRender(argv.slice(1));
+  if (cmd === "check") return runCheck(argv.slice(1));
+  if (cmd === "describe") return runDescribe(argv.slice(1));
+  if (cmd === "guide") {
+    process.stdout.write(GUIDE);
+    return 0;
+  }
 
   process.stderr.write(`pinhole: unknown command '${cmd}'\n\n${USAGE}`);
   return 2;
+}
+
+/** Split a verb's args into the project dir, the `--json` flag, and the chant
+ * graph options (shared by check/describe). */
+function parseInspectArgs(args: string[]): { dir?: string; json: boolean; opts: GraphOptions } {
+  let dir: string | undefined;
+  let json = false;
+  const opts: GraphOptions = {};
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--json") json = true;
+    else if (a === "--detail") opts.detail = Number(args[++i]);
+    else if (a === "--lens") opts.lens = args[++i];
+    else if (a === "--up") opts.up = true;
+    else if (a === "--down") opts.down = true;
+    else if (!a.startsWith("-")) dir = a;
+  }
+  return { dir, json, opts };
+}
+
+/** Validate a project against chant's lint gate. Exit 0 = clean (rendering will
+ * succeed); exit 1 = diagnostics (printed). The gate, surfaced for agents. */
+async function runCheck(args: string[]): Promise<number> {
+  const { dir, json } = parseInspectArgs(args);
+  if (!dir) {
+    process.stderr.write(`pinhole: check needs a project directory\n`);
+    return 2;
+  }
+  try {
+    const report = await lint(dir);
+    if (json) {
+      process.stdout.write(JSON.stringify({ ok: report.ok, diagnostics: report.diagnostics }, null, 2) + "\n");
+    } else {
+      process.stdout.write((report.stylish || (report.ok ? "✓ clean" : "lint failed")) + "\n");
+    }
+    return report.ok ? 0 : 1;
+  } catch (err) {
+    return fail(err, json);
+  }
+}
+
+/** Dump the current graph IR as a digest — what an agent reads before editing. */
+async function runDescribe(args: string[]): Promise<number> {
+  const { dir, json, opts } = parseInspectArgs(args);
+  if (!dir) {
+    process.stderr.write(`pinhole: describe needs a project directory\n`);
+    return 2;
+  }
+  try {
+    const ir = await graphIr(dir, opts);
+    process.stdout.write(json ? JSON.stringify(summarizeIr(ir), null, 2) + "\n" : describeText(ir));
+    return 0;
+  } catch (err) {
+    return fail(err, json);
+  }
+}
+
+/** Report an error either as JSON (for agents) or prose, and return exit 1. */
+function fail(err: unknown, json: boolean): number {
+  const message = err instanceof Error ? err.message : String(err);
+  if (json) process.stdout.write(JSON.stringify({ ok: false, error: message }) + "\n");
+  else process.stderr.write(`pinhole: ${message}\n`);
+  return 1;
 }
 
 async function runRender(args: string[]): Promise<number> {
@@ -69,6 +146,7 @@ async function runRender(args: string[]): Promise<number> {
   let focus: Focus = "app";
   let pulse: string[] | undefined;
   let flow = false;
+  let json = false;
   const opts: GraphOptions = {};
 
   for (let i = 0; i < args.length; i++) {
@@ -84,6 +162,7 @@ async function runRender(args: string[]): Promise<number> {
     else if (a === "--focus") focus = (args[++i] as Focus) ?? "app";
     else if (a === "--highlight") pulse = (args[++i] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
     else if (a === "--flow") flow = true;
+    else if (a === "--json") json = true;
     else if (a === "--detail") opts.detail = Number(args[++i]);
     else if (a === "--lens") opts.lens = args[++i];
     else if (a === "--up") opts.up = true;
@@ -96,22 +175,29 @@ async function runRender(args: string[]): Promise<number> {
     return 2;
   }
 
+  // Record each written file; report as prose (human) or collected at the end (json).
+  const wrote: string[] = [];
+  const note = (path: string, extra = "") => {
+    wrote.push(path);
+    if (!json) process.stderr.write(`pinhole: wrote ${path}${extra}\n`);
+  };
+  const done = () => {
+    if (json) process.stdout.write(JSON.stringify({ ok: true, wrote }) + "\n");
+    return 0;
+  };
+
   try {
     const theme = getTheme(themeName);
 
     if (morph) {
-      if (!html) {
-        process.stderr.write(`pinhole: --morph writes an interactive artifact; pass --html <file>\n`);
-        return 2;
-      }
+      if (!html) return fail(new Error("--morph writes an interactive artifact; pass --html <file>"), json);
       const views = await buildMorphViews(dir, opts, title);
       if (views.length < 2) {
-        process.stderr.write(`pinhole: --morph needs at least two distinct views (detail tiers); this graph collapses to one\n`);
-        return 1;
+        return fail(new Error("--morph needs at least two distinct views (detail tiers); this graph collapses to one"), json);
       }
       await writeFile(html, renderMorphHtml(views, { title, theme }));
-      process.stderr.write(`pinhole: wrote ${html} (${views.length} views)\n`);
-      return 0;
+      note(html, ` (${views.length} views)`);
+      return done();
     }
 
     const ir = await graphIr(dir, opts);
@@ -121,14 +207,14 @@ async function runRender(args: string[]): Promise<number> {
     if (containment) {
       if (html) {
         await writeFile(html, renderContainmentApp(ir, { title, theme, focus }));
-        process.stderr.write(`pinhole: wrote ${html}\n`);
+        note(html);
       }
       if (out) {
         await writeFile(out, renderContainment(ir, { title, theme, focus }));
-        process.stderr.write(`pinhole: wrote ${out}\n`);
+        note(out);
       }
-      if (!out && !html) process.stdout.write(renderContainment(ir, { title, theme, focus }));
-      return 0;
+      if (!out && !html && !json) process.stdout.write(renderContainment(ir, { title, theme, focus }));
+      return done();
     }
 
     // Otherwise measure each node's card, lay out with those sizes, and paint.
@@ -141,17 +227,18 @@ async function runRender(args: string[]): Promise<number> {
     });
     if (html) {
       await writeFile(html, renderHtml(ir, svg, { title, theme }));
-      process.stderr.write(`pinhole: wrote ${html}\n`);
+      note(html);
     }
     if (out) {
       await writeFile(out, svg);
-      process.stderr.write(`pinhole: wrote ${out}\n`);
+      note(out);
     }
-    if (!out && !html) {
+    if (!out && !html && !json) {
       process.stdout.write(svg);
     }
-    return 0;
+    return done();
   } catch (err) {
+    if (json) return fail(err, json);
     process.stderr.write(`pinhole: ${err instanceof Error ? err.message : String(err)}\n`);
     return 1;
   }

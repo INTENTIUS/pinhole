@@ -16,6 +16,7 @@
   "scripts": {
     "tsc": "tsc --noEmit",
     "test": "vitest run",
+    "gen:agents": "node --experimental-strip-types -e \"import('./src/guide.ts').then(m=>process.stdout.write(m.GUIDE))\" > AGENTS.md",
     "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --external:@intentius/chant --outfile=dist/cli.js && chmod +x dist/cli.js",
     "prepublishOnly": "npm run build"
   },
