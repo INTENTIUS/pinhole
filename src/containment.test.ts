@@ -12,6 +12,10 @@ describe("roleForKind", () => {
     expect(roleForKind("AWS::S3::Bucket")).toBe("thing");
     expect(roleForKind("AWS::EC2::RouteTable")).toBe("plumbing");
     expect(roleForKind("AWS::EC2::Route")).toBe("plumbing");
+    expect(roleForKind("AWS::ElasticLoadBalancingV2::TargetGroup")).toBe("plumbing"); // routing glue, drill-down only
+    expect(roleForKind("AWS::ElasticLoadBalancingV2::ListenerRule")).toBe("plumbing");
+    expect(roleForKind("AWS::ElasticLoadBalancingV2::Listener")).toBe("plumbing"); // not top-level
+    expect(roleForKind("AWS::ECS::TaskDefinition")).toBe("plumbing"); // drill-into, not high-level
     expect(roleForKind("AWS::EC2::InternetGateway")).toBe("plumbing");
     expect(roleForKind("AWS::EC2::SubnetRouteTableAssociation")).toBe("plumbing");
   });
@@ -194,29 +198,29 @@ describe("--focus security — SGs as the subject, workload dimmed", () => {
 });
 
 describe("topology v2 — fixpoint folding + valuable-noun tie-break", () => {
-  // A chain of config: rule → listener → alb(ingress). v1 (single pass) would
-  // collapse the rule but leave the listener (its in-degree from the rule still
-  // counted). v2 recomputes after each collapse, so the whole chain folds to the
-  // ingress.
+  // A chain of generic config (not kinds the pack already silences): wrapper →
+  // adapter → alb(ingress). v1 (single pass) would collapse the wrapper but leave
+  // the adapter (its in-degree from the wrapper still counted). v2 recomputes
+  // after each collapse, so the whole chain folds to the ingress.
   const chain: GraphIR = {
     nodes: [
       { id: "vpc", kind: "AWS::EC2::VPC", lexicon: "aws", attrs: {} },
       { id: "alb", kind: "AWS::ELBv2::LoadBalancer", lexicon: "aws", attrs: {} },
-      { id: "listener", kind: "AWS::ELBv2::Listener", lexicon: "aws", attrs: {} },
-      { id: "rule", kind: "AWS::ELBv2::ListenerRule", lexicon: "aws", attrs: {} },
+      { id: "adapter", kind: "AWS::Acme::Adapter", lexicon: "aws", attrs: {} },
+      { id: "wrapper", kind: "AWS::Acme::Wrapper", lexicon: "aws", attrs: {} },
     ],
     edges: [
       { from: "alb", to: "vpc", kind: "ref", viaAttr: "Subnets" },
-      { from: "listener", to: "alb", kind: "ref", viaAttr: "LoadBalancerArn" },
-      { from: "rule", to: "listener", kind: "ref", viaAttr: "ListenerArn" },
+      { from: "adapter", to: "alb", kind: "ref", viaAttr: "TargetArn" },
+      { from: "wrapper", to: "adapter", kind: "ref", viaAttr: "AdapterArn" },
     ],
     groups: {},
   };
   const c = renderContainment(chain, {});
 
   it("folds a chain of single-attachment config to a fixpoint", () => {
-    expect(c).not.toContain('data-node-id="rule"');
-    expect(c).not.toContain('data-node-id="listener"'); // v1 would have left this
+    expect(c).not.toContain('data-node-id="wrapper"');
+    expect(c).not.toContain('data-node-id="adapter"'); // v1 would have left this
     expect(c).toContain('data-node-id="alb"');
   });
 
