@@ -57,6 +57,9 @@ exactly what's wrong.
     --icon            compact glyph nodes for dense graphs.
     --containment     drop low-signal plumbing; render the VPC as a boundary with
                       its resources inside (--focus app|network|security).
+    --hints <file>    (with --containment) override salience — { roles: { id:
+                      role }, edges: [ { from, to } ] } to force-keep/drop a node
+                      or assert a relationship the IR can't express.
     --morph           (with --html) flip between detail tiers, identity preserved.
 
 Run \`pinhole render\` with no project dir for the full option list.

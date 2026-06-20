@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { roleForKind, renderContainment, containmentNotes, renderContainmentApp, subtitleFor } from "./containment.ts";
+import { defaultPack } from "./pack.ts";
 import type { GraphIR } from "./ir.ts";
 
 describe("roleForKind", () => {
@@ -113,6 +114,36 @@ describe("topology — incidental detection from relationship shape", () => {
   it("keeps hubs and multi-dependency subjects (alb, service)", () => {
     expect(t).toContain('data-node-id="alb"');
     expect(t).toContain('data-node-id="svc"');
+  });
+});
+
+describe("presentation pack + manual hints (#28)", () => {
+  it("roleForKind honours a swapped pack (taxonomy lives in the pack)", () => {
+    const pack = { ...defaultPack, roleRules: [[/widget/, "place"] as [RegExp, "place"]] };
+    expect(roleForKind("Acme::Widget", "app", pack)).toBe("place");
+    expect(roleForKind("AWS::EC2::VPC", "app", pack)).toBe("thing"); // custom rules replace the defaults
+    expect(roleForKind("AWS::EC2::VPC", "app")).toBe("place"); // default pack unchanged
+  });
+
+  it("overrides a node's role — force-keep plumbing, force-drop a thing", () => {
+    const kept = renderContainment(ir, { hints: { roles: { routeTable: "thing" } } });
+    expect(kept).toContain('data-node-id="routeTable"'); // normally dropped plumbing, now kept
+    const dropped = renderContainment(ir, { hints: { roles: { assets: "plumbing" } } });
+    expect(dropped).not.toContain('data-node-id="assets"'); // normally a kept thing, now hidden
+  });
+
+  it("asserts a relationship the IR lacks, drawn as the implied hint", () => {
+    const hir: GraphIR = {
+      nodes: [
+        { id: "vpc", kind: "AWS::EC2::VPC", lexicon: "aws", attrs: {} },
+        { id: "alb", kind: "AWS::ELBv2::LoadBalancer", lexicon: "aws", attrs: {} },
+        { id: "svc", kind: "AWS::ECS::Service", lexicon: "aws", attrs: {} },
+      ],
+      edges: [{ from: "alb", to: "vpc", kind: "ref", viaAttr: "Subnets" }],
+      groups: {},
+    };
+    const out = renderContainment(hir, { hints: { edges: [{ from: "alb", to: "svc" }] } });
+    expect(out).toContain('data-edge-from="alb" data-edge-to="svc" data-edge-implied="1"');
   });
 });
 
