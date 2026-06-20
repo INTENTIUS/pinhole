@@ -150,6 +150,36 @@ export class Canvas {
       `</div></foreignObject>`;
   }
 
+  /** Compact icon node: a glyph badge with a single truncated label. Identity at
+   * a glance for dense graphs — the full name and attrs come from the hover
+   * tooltip and the click inspector. Native SVG (tier-agnostic), with the same
+   * `data-node-id` hook as the cards. */
+  nodeIcon(
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    s: Status,
+    label: string,
+    icon: string,
+    emphasize = false,
+    nodeId?: string,
+  ): void {
+    const t = statusTokens(s);
+    const idAttr = nodeId ? ` data-node-id="${esc(nodeId)}"` : "";
+    const badge = 48;
+    const cx = x + w / 2;
+    const bx = cx - badge / 2;
+    const by = y + 8;
+    this.body += emphasize ? `<g${idAttr} class="pin-pulse">` : `<g${idAttr}>`;
+    this.body += `<rect x="${bx}" y="${by}" width="${badge}" height="${badge}" rx="13" fill="${this.c(t.fill)}" stroke="${this.c(t.stroke)}" stroke-width="1.4"/>`;
+    this.body += `<rect x="${bx}" y="${by}" width="${badge}" height="4" rx="2" fill="${this.c(t.bar)}"/>`;
+    this.body += this.glyph(icon, cx - 13, by + 12, 26);
+    const max = Math.floor((w - 8) / 6.2);
+    this.body += `<text x="${cx}" y="${by + badge + 18}" text-anchor="middle" fill="${this.c("text")}" font-size="12" font-weight="600">${esc(clip(label, max))}</text>`;
+    this.body += `</g>`;
+  }
+
   /** Place a monochrome glyph (0 0 24 24 geometry) at (gx,gy), scaled to `size`,
    * stroked in the theme's text color. */
   private glyph(body: string, gx: number, gy: number, size: number): string {

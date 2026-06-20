@@ -8,12 +8,14 @@ const USAGE = `pinhole — agentic infra diagrammer
 
 Usage:
   pinhole render <project-dir> [-o out.svg] [--html out.html] [--title <text>]
-                               [--theme <name>] [--rich]
+                               [--theme <name>] [--rich] [--icon]
                                [--detail 0..3] [--lens <kind>:<target>] [--up] [--down]
 
 Themes: dark (default), light, blueprint.
 --rich emits foreignObject HTML labels (browser/inline only); default is portable
 native-SVG text that works as a static image and on GitHub.
+--icon draws each node as a compact glyph + a truncated label (dense graphs);
+the full name and attrs come from hover and the click inspector.
 
 --html writes a self-contained, offline interactive artifact: the SVG inlined,
 plus a live theme switcher and hover/click inspection of node attrs. The plain
@@ -51,6 +53,7 @@ async function runRender(args: string[]): Promise<number> {
   let title: string | undefined;
   let themeName: string | undefined;
   let tier: "portable" | "rich" = "portable";
+  let style: "card" | "icon" = "card";
   let pulse: string[] | undefined;
   let flow = false;
   const opts: GraphOptions = {};
@@ -62,6 +65,7 @@ async function runRender(args: string[]): Promise<number> {
     else if (a === "--title") title = args[++i];
     else if (a === "--theme") themeName = args[++i];
     else if (a === "--rich") tier = "rich";
+    else if (a === "--icon" || a === "--icons") style = "icon";
     else if (a === "--highlight") pulse = (args[++i] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
     else if (a === "--flow") flow = true;
     else if (a === "--detail") opts.detail = Number(args[++i]);
@@ -81,8 +85,8 @@ async function runRender(args: string[]): Promise<number> {
     // IR first so we can measure each node's card; then lay out with those sizes
     // (same options, so the IR and layout node sets line up) and paint.
     const ir = await graphIr(dir, opts);
-    const layout = await graphLayout(dir, opts, cardSizes(ir));
-    const svg = renderSvg(ir, layout, { title, theme, tier, animate: { pulse, flow } });
+    const layout = await graphLayout(dir, opts, cardSizes(ir, { style }));
+    const svg = renderSvg(ir, layout, { title, theme, tier, style, animate: { pulse, flow } });
     if (html) {
       await writeFile(html, renderHtml(ir, svg, { title, theme }));
       process.stderr.write(`pinhole: wrote ${html}\n`);

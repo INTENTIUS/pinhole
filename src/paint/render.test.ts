@@ -103,7 +103,33 @@ describe("card sizes (the --node-sizes map for chant's layout)", () => {
 
   it("honours per-node field overrides", () => {
     const base = cardFootprint(ir.nodes[0]);
-    const overridden = cardFootprint(ir.nodes[0], { fields: [{ label: "x", value: "1" }, { label: "y", value: "2" }] });
+    const overridden = cardFootprint(ir.nodes[0], { override: { fields: [{ label: "x", value: "1" }, { label: "y", value: "2" }] } });
     expect(overridden.h).not.toBe(base.h);
+  });
+
+  it("icon style is a fixed compact footprint, uniform across nodes", () => {
+    const a = cardFootprint(ir.nodes[0], { style: "icon" });
+    const b = cardFootprint({ id: "b", kind: "Vpc", lexicon: "aws", attrs: { region: "x", cidr: "y", az: "z" } }, { style: "icon" });
+    expect(a).toEqual(b); // independent of attrs/fields
+    expect(a.w).toBeLessThan(180); // smaller than a card
+    const sizes = cardSizes(ir, { style: "icon" });
+    expect(Object.values(sizes).every((s) => s.w === a.w && s.h === a.h)).toBe(true);
+  });
+});
+
+describe("renderSvg icon style", () => {
+  it("draws a glyph + a single truncated label, no kind/field text", () => {
+    const longIr: GraphIR = {
+      nodes: [{ id: "aVeryLongNodeNameToTruncate", kind: "SecurityGroup", lexicon: "aws", attrs: { region: "us-east1" } }],
+      edges: [],
+      groups: {},
+    };
+    const longLayout: Layout = { width: 200, height: 100, nodes: [{ id: "aVeryLongNodeNameToTruncate", x: 100, y: 50 }] };
+    const svg = renderSvg(longIr, longLayout, { style: "icon" });
+    expect(svg).toContain('text-anchor="middle"'); // centered label
+    expect(svg).toContain('data-node-id="aVeryLongNodeNameToTruncate"');
+    expect(svg).toContain("…"); // label truncated
+    expect(svg).not.toContain("SecurityGroup · aws"); // no kind sub-label
+    expect(svg).not.toContain("region"); // no fields on an icon node
   });
 });
