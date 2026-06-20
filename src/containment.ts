@@ -355,7 +355,8 @@ function computeLayout(
 /** Render a graph IR as a salience-filtered containment diagram (SVG string). */
 export function renderContainment(ir: GraphIR, opts: ContainmentOptions = {}): string {
   const theme = opts.theme ?? getTheme();
-  const { role, kept, meta, parent, children, depEdges, implied } = analyze(ir, opts.focus ?? "app");
+  const focus = opts.focus ?? "app";
+  const { role, kept, meta, parent, children, depEdges, implied } = analyze(ir, focus);
   const roots = [...kept].filter((id) => !parent[id]).sort();
   const { L, canvasW, canvasH } = computeLayout(roots, children, role);
 
@@ -364,7 +365,7 @@ export function renderContainment(ir: GraphIR, opts: ContainmentOptions = {}): s
   let badges = "";
   const walk = (id: string): void => {
     if (isBox(id, children, role)) boxes += box(id, L, role[id], meta[id], theme);
-    else badges += badge(id, L, role[id], meta[id], theme);
+    else badges += badge(id, L, role[id], meta[id], theme, focus);
     (children[id] ?? []).forEach(walk);
   };
   roots.forEach(walk);
@@ -413,9 +414,16 @@ function box(id: string, L: Layout, role: Role, m: { kind: string; lexicon: stri
   );
 }
 
-/** A leaf node (thing/policy): glyph badge + a label below it. Policies render
- * dimmer (they're dependency targets, not primary things). */
-function badge(id: string, L: Layout, role: Role, m: { kind: string; lexicon: string }, theme: Theme): string {
+/** Focus-driven emphasis for a leaf. By default policies are context (dependency
+ * targets, dimmed); under security focus the lens inverts — security policies are
+ * the *subject* (bright, accented) and the workload dims to context. */
+function emphasis(role: Role, focus: Focus): { context: boolean; subject: boolean } {
+  if (focus === "security") return { context: role === "thing", subject: role === "policy" };
+  return { context: role === "policy", subject: false };
+}
+
+/** A leaf node (thing/policy): glyph badge + a label below it. */
+function badge(id: string, L: Layout, role: Role, m: { kind: string; lexicon: string }, theme: Theme, focus: Focus = "app"): string {
   const x = L.X[id];
   const y = L.Y[id];
   const w = L.W[id];
@@ -424,13 +432,16 @@ function badge(id: string, L: Layout, role: Role, m: { kind: string; lexicon: st
   const bx = cx - badgeSize / 2;
   const by = y + 6;
   const glyph = resolveGlyph({ lexicon: m.lexicon, kind: m.kind });
-  const fillOpacity = role === "policy" ? "0.35" : "1";
+  const { context, subject } = emphasis(role, focus);
+  const fillOpacity = context ? "0.35" : "1";
+  const stroke = subject ? v(theme, "accentStroke") : v(theme, "neutralStroke");
+  const bar = subject ? v(theme, "accentBar") : v(theme, "neutralBar");
   return (
     `<g data-node-id="${esc(id)}">` +
-    `<rect x="${bx}" y="${by}" width="${badgeSize}" height="${badgeSize}" rx="13" fill="${v(theme, "neutralFill")}" fill-opacity="${fillOpacity}" stroke="${v(theme, "neutralStroke")}" stroke-width="1.4"/>` +
-    `<rect x="${bx}" y="${by}" width="${badgeSize}" height="4" rx="2" fill="${v(theme, "neutralBar")}"/>` +
+    `<rect x="${bx}" y="${by}" width="${badgeSize}" height="${badgeSize}" rx="13" fill="${v(theme, "neutralFill")}" fill-opacity="${fillOpacity}" stroke="${stroke}" stroke-width="${subject ? 1.8 : 1.4}"/>` +
+    `<rect x="${bx}" y="${by}" width="${badgeSize}" height="4" rx="2" fill="${bar}"/>` +
     glyphAt(glyph.body, cx - 13, by + 12, 26, theme) +
-    `<text x="${cx}" y="${by + badgeSize + 16}" text-anchor="middle" fill="${v(theme, "text")}" font-size="11" font-weight="600">${esc(clip(id, Math.floor(w / 6.2)))}</text>` +
+    `<text x="${cx}" y="${by + badgeSize + 16}" text-anchor="middle" fill="${v(theme, "text")}" font-size="11" font-weight="600" opacity="${context ? "0.55" : "1"}">${esc(clip(id, Math.floor(w / 6.2)))}</text>` +
     `</g>`
   );
 }
@@ -452,13 +463,16 @@ function glyphAt(body: string, gx: number, gy: number, size: number, theme: Them
 // ---------------------------------------------------------------------------
 
 /** A leaf badge drawn at the origin (0,0), so a transform can place/move it. */
-function originBadge(id: string, role: Role, m: { kind: string; lexicon: string }, theme: Theme): string {
+function originBadge(id: string, role: Role, m: { kind: string; lexicon: string }, theme: Theme, focus: Focus = "app"): string {
   const k = (26 / 24).toFixed(4);
-  const dim = role === "plumbing" ? ` opacity="0.6"` : "";
+  const { context, subject } = emphasis(role, focus);
+  const dim = role === "plumbing" || context ? ` opacity="0.5"` : "";
+  const stroke = subject ? v(theme, "accentStroke") : v(theme, "neutralStroke");
+  const bar = subject ? v(theme, "accentBar") : v(theme, "neutralBar");
   return (
     `<g class="pin-cnode" data-node-id="${esc(id)}" transform="translate(0,0)" style="opacity:0"${dim}>` +
-    `<rect x="-24" y="-24" width="48" height="48" rx="13" fill="${v(theme, "neutralFill")}" stroke="${v(theme, "neutralStroke")}" stroke-width="1.4"/>` +
-    `<rect x="-24" y="-24" width="48" height="4" rx="2" fill="${v(theme, "neutralBar")}"/>` +
+    `<rect x="-24" y="-24" width="48" height="48" rx="13" fill="${v(theme, "neutralFill")}" stroke="${stroke}" stroke-width="${subject ? 1.8 : 1.4}"/>` +
+    `<rect x="-24" y="-24" width="48" height="4" rx="2" fill="${bar}"/>` +
     `<g transform="translate(-13 -12) scale(${k})" fill="none" stroke="${v(theme, "textFaint")}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${resolveGlyph({ lexicon: m.lexicon, kind: m.kind }).body}</g>` +
     `<text class="pin-clabel" y="33" text-anchor="middle" fill="${v(theme, "text")}" font-size="10" font-weight="600">${esc(clip(id, 14))}</text>` +
     `</g>`
@@ -585,10 +599,13 @@ export function renderContainmentApp(ir: GraphIR, opts: ContainmentOptions = {})
   const theme = opts.theme ?? getTheme();
   const title = opts.title ?? "Infrastructure";
 
-  // Two focus states: "app" (network is light context) and "network" (subnets/
-  // route tables are structured boxes). Clicking the VPC toggles between them —
-  // that's the drill-down. Leaf nodes are drawn once and glide between states.
-  const variants = [analyze(ir, "app"), analyze(ir, "network")];
+  // Two focus states: a primary (app, or security when that's the lens) and
+  // "network" (subnets/route tables are structured boxes). Clicking the VPC
+  // toggles between them. Leaf nodes are drawn once and glide between states.
+  const focus = opts.focus ?? "app";
+  const variants = focus === "security"
+    ? [analyze(ir, "security"), analyze(ir, "network")]
+    : [analyze(ir, "app"), analyze(ir, "network")];
   const attrs: Record<string, Record<string, unknown>> = {};
   for (const n of ir.nodes) attrs[n.id] = n.attrs;
   const subtitleOf = (id: string): string | undefined => {
@@ -647,13 +664,13 @@ export function renderContainmentApp(ir: GraphIR, opts: ContainmentOptions = {})
   // the network view (index 1) is dense → badges go icon-only (label on hover).
   const stateMeta = states.map((s, i) => ({ ...s, dense: i === 1 }));
 
-  const badges = badgeIds.map((id) => originBadge(id, roleOf[id], metaOf[id], theme)).join("");
+  const badges = badgeIds.map((id) => originBadge(id, roleOf[id], metaOf[id], theme, focus)).join("");
 
   // The VPC (a real place node in app focus) toggles to the network state.
   const realNodes = new Set(ir.nodes.map((n) => n.id));
   const expandIndex: Record<string, number> = {};
   for (const id of variants[0].kept) if (realNodes.has(id) && variants[0].role[id] === "place") expandIndex[id] = 1;
-  const startState = opts.focus === "network" ? 1 : 0;
+  const startState = focus === "network" ? 1 : 0;
 
   const META: Record<string, { kind: string; lexicon: string; attrs: unknown }> = {};
   for (const n of ir.nodes) META[n.id] = { kind: n.kind, lexicon: n.lexicon, attrs: n.attrs };

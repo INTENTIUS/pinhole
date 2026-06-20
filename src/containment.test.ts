@@ -116,6 +116,24 @@ describe("topology — incidental detection from relationship shape", () => {
   });
 });
 
+describe("--focus security — SGs as the subject, workload dimmed", () => {
+  const sec = renderContainment(ir, { focus: "security" });
+
+  it("reveals security groups (hidden under app focus) and accents them as the subject", () => {
+    expect(sec).toContain('data-node-id="sg"');
+    expect(sec).toMatch(/data-node-id="sg"><rect[^>]*stroke="var\(--pin-accentStroke/);
+  });
+
+  it("dims the workload to context", () => {
+    expect(sec).toMatch(/data-node-id="web"><rect[^>]*fill-opacity="0.35"/);
+  });
+
+  it("draws the resource→SG relationship that app focus drops", () => {
+    expect(sec).toContain('data-edge-from="web"');
+    expect(sec).toContain('data-edge-to="sg"');
+  });
+});
+
 describe("topology v2 — fixpoint folding + valuable-noun tie-break", () => {
   // A chain of config: rule → listener → alb(ingress). v1 (single pass) would
   // collapse the rule but leave the listener (its in-degree from the rule still
