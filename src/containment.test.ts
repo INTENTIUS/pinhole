@@ -123,16 +123,14 @@ describe("renderContainmentApp (interactive expand)", () => {
     expect(app).toContain("function applyState");
   });
 
-  it("makes the VPC expandable (it hides plumbing) and reveals it on expand", () => {
+  it("toggles the VPC between app and network views, structuring the network on drill-down", () => {
     const script = app.match(/<script>([\s\S]*?)<\/script>/)![1].replace(/\\u003c/g, "<");
     const STATES = JSON.parse(script.match(/const STATES = (\[[\s\S]*?\]);\n/)![1]);
     const EXPAND = JSON.parse(script.match(/const EXPAND = (\{[\s\S]*?\});\n/)![1]);
-    expect("vpc" in EXPAND).toBe(true);
-    // routeTable is hidden in the collapsed state, present once the VPC expands
-    expect(STATES[0].pos.routeTable).toBeUndefined();
-    expect(STATES[EXPAND.vpc].pos.routeTable).toBeDefined();
-    // the plumbing leaf is drawn (once) as a movable badge
-    expect(app).toContain('data-node-id="routeTable"');
+    expect("vpc" in EXPAND).toBe(true); // clicking the VPC switches focus
+    // the route table is collapsed in the app view, a structured box in network view
+    expect(STATES[0].boxes).not.toContain('data-node-id="routeTable"');
+    expect(STATES[EXPAND.vpc].boxes).toContain('data-node-id="routeTable"');
   });
 
   it("ships a syntactically valid viewer", () => {

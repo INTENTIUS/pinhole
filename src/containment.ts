@@ -24,6 +24,11 @@ import { clip, esc } from "./paint/svg.ts";
 
 export type Role = "place" | "policy" | "thing" | "plumbing";
 
+/** What the diagram is *about* — drives what's salient. `app` (default): the
+ * network is light context, the workload is the subject. `network`: VPC/subnets
+ * are the structured subject. `security`: security groups are first-class. */
+export type Focus = "app" | "network" | "security";
+
 const ROLE_RULES: Array<[RegExp, Role]> = [
   // plumbing first — these would otherwise look like things/places. Collapsed
   // into the nearest place, recoverable on drill-down (expand). Covers network
@@ -33,15 +38,16 @@ const ROLE_RULES: Array<[RegExp, Role]> = [
   [/\bvpc|\bvnet/, "place"],
 ];
 
-/** Classify a resource kind into a diagram role. Defaults to "thing". In
- * `detail` mode (the drill-down), subnets and route tables are promoted back to
- * places so the revealed network has structure (subnet boxes), instead of a flat
- * pile of plumbing. */
-export function roleForKind(kind: string, detail = false): Role {
+/** Classify a resource kind into a diagram role, given the diagram's focus.
+ * Under `network` focus subnets/route tables become places (structured boxes);
+ * under `security` focus security groups are first-class policies. Otherwise they
+ * are plumbing — collapsed into the nearest place, recoverable on drill-down. */
+export function roleForKind(kind: string, focus: Focus = "app"): Role {
   const k = kind.toLowerCase();
-  if (detail && ((/subnet/.test(k) && !/association|group/.test(k)) || (/routetable/.test(k) && !/association/.test(k)))) {
+  if (focus === "network" && ((/subnet/.test(k) && !/association|group/.test(k)) || (/routetable/.test(k) && !/association/.test(k)))) {
     return "place";
   }
+  if (focus === "security" && /securitygroup|firewall|\bwaf|networkacl/.test(k)) return "policy";
   for (const [re, role] of ROLE_RULES) if (re.test(k)) return role;
   return "thing";
 }
@@ -63,6 +69,8 @@ const GAP = 18;
 export interface ContainmentOptions {
   title?: string;
   theme?: Theme;
+  /** What the diagram is about (default "app"). */
+  focus?: Focus;
 }
 
 interface Layout {
@@ -96,14 +104,14 @@ interface Analysis {
  * nested inside the network their networked siblings anchor to. Only refs that
  * are neither lives-in nor spans stay as dependency lines, and plumbing is hidden
  * under the place it lives in. */
-function analyze(ir: GraphIR): Analysis {
+function analyze(ir: GraphIR, focus: Focus = "app"): Analysis {
   const role: Record<string, Role> = {};
   const kept = new Set<string>();
   const meta: Record<string, { kind: string; lexicon: string }> = {};
   const composite: Record<string, string> = {};
   const compositeType: Record<string, string> = {};
   for (const n of ir.nodes) {
-    role[n.id] = roleForKind(n.kind);
+    role[n.id] = roleForKind(n.kind, focus);
     meta[n.id] = { kind: n.kind, lexicon: n.lexicon };
     if (role[n.id] !== "plumbing") kept.add(n.id);
     if (n.compositeInstance) {
@@ -260,7 +268,7 @@ function computeLayout(
 /** Render a graph IR as a salience-filtered containment diagram (SVG string). */
 export function renderContainment(ir: GraphIR, opts: ContainmentOptions = {}): string {
   const theme = opts.theme ?? getTheme();
-  const { role, kept, meta, parent, children, depEdges } = analyze(ir);
+  const { role, kept, meta, parent, children, depEdges } = analyze(ir, opts.focus ?? "app");
   const roots = [...kept].filter((id) => !parent[id]).sort();
   const { L, canvasW, canvasH } = computeLayout(roots, children, role);
 
@@ -306,20 +314,21 @@ export function renderContainment(ir: GraphIR, opts: ContainmentOptions = {}): s
   );
 }
 
-/** A place/container box: rounded rect, a title row with its glyph, children
- * drawn separately on top. */
-function box(id: string, L: Layout, role: Role, m: { kind: string; lexicon: string }, theme: Theme): string {
+/** A place/container box: rounded rect, a title row with its glyph (and an
+ * optional info-bar subtitle, e.g. a VPC's CIDR), children drawn over it. */
+function box(id: string, L: Layout, role: Role, m: { kind: string; lexicon: string }, theme: Theme, subtitle?: string): string {
   const x = L.X[id];
   const y = L.Y[id];
   const w = L.W[id];
   const h = L.H[id];
   const glyph = resolveGlyph({ lexicon: m.lexicon, kind: m.kind });
   const stroke = role === "place" ? v(theme, "accentStroke") : v(theme, "neutralStroke");
+  const sub = subtitle ? `<tspan fill="${v(theme, "textFaint")}" font-weight="400"> · ${esc(clip(subtitle, 22))}</tspan>` : "";
   return (
     `<g data-node-id="${esc(id)}">` +
     `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="14" fill="${v(theme, "neutralFill")}" fill-opacity="0.5" stroke="${stroke}" stroke-width="1.4"/>` +
     glyphAt(glyph.body, x + 14, y + 7, 18, theme) +
-    `<text x="${x + 40}" y="${y + 21}" fill="${v(theme, "text")}" font-size="13" font-weight="700">${esc(clip(id, Math.floor((w - 52) / 7.5)))}</text>` +
+    `<text x="${x + 40}" y="${y + 21}" fill="${v(theme, "text")}" font-size="13" font-weight="700">${esc(clip(id, Math.floor((w - 52) / 7.5)))}${sub}</text>` +
     `</g>`
   );
 }
@@ -394,49 +403,68 @@ function jsonScriptC(value: unknown): string {
 export function renderContainmentApp(ir: GraphIR, opts: ContainmentOptions = {}): string {
   const theme = opts.theme ?? getTheme();
   const title = opts.title ?? "Infrastructure";
-  const a = analyze(ir);
-  const roots = [...a.kept].filter((id) => !a.parent[id]).sort();
 
-  // states: collapsed, then one per place that hides plumbing (its hidden
-  // plumbing added as children, so the layout reflows to make room).
-  const expandable = roots.flatMap(function flat(id): string[] {
-    const here = a.hidden[id]?.length ? [id] : [];
-    return here.concat((a.children[id] ?? []).flatMap(flat));
-  });
-  const stateDefs: Array<{ expand?: string }> = [{}, ...expandable.map((id) => ({ expand: id }))];
-  const expandIndex: Record<string, number> = {};
-  expandable.forEach((id, i) => (expandIndex[id] = i + 1));
-
+  // Two focus states: "app" (network is light context) and "network" (subnets/
+  // route tables are structured boxes). Clicking the VPC toggles between them —
+  // that's the drill-down. Leaf nodes are drawn once and glide between states.
+  const variants = [analyze(ir, "app"), analyze(ir, "network")];
+  const attrs: Record<string, Record<string, unknown>> = {};
+  for (const n of ir.nodes) attrs[n.id] = n.attrs;
+  const subtitleOf = (id: string): string | undefined => {
+    const c = attrs[id]?.CidrBlock ?? attrs[id]?.cidr;
+    return typeof c === "string" ? c : undefined;
+  };
   const center = (L: Layout, id: string) => ({ x: Math.round(L.X[id] + L.W[id] / 2), y: Math.round(L.Y[id] + L.H[id] / 2) });
+
+  // Pass 1 — lay out each variant; collect which ids are boxes vs leaves anywhere.
   let maxW = 480;
   let maxH = 300;
-  const states = stateDefs.map((def) => {
-    const children: Record<string, string[]> = {};
-    for (const k of Object.keys(a.children)) children[k] = a.children[k].slice();
-    if (def.expand) children[def.expand] = (children[def.expand] ?? []).concat(a.hidden[def.expand] ?? []);
-    const { L, canvasW, canvasH } = computeLayout(roots, children, a.role);
+  const boxAny = new Set<string>();
+  const leafAny = new Set<string>();
+  const metaOf: Record<string, { kind: string; lexicon: string }> = {};
+  const roleOf: Record<string, Role> = {};
+  const laid = variants.map((a) => {
+    const roots = [...a.kept].filter((id) => !a.parent[id]).sort();
+    const { L, canvasW, canvasH } = computeLayout(roots, a.children, a.role);
     maxW = Math.max(maxW, canvasW);
     maxH = Math.max(maxH, canvasH);
-    const vis = Object.keys(L.X);
-    let boxesHtml = "";
-    const pos: Record<string, { x: number; y: number }> = {};
     const walk = (id: string): void => {
-      if (isBox(id, children, a.role)) boxesHtml += box(id, L, a.role[id], a.meta[id], theme);
-      else pos[id] = center(L, id);
-      (children[id] ?? []).forEach(walk);
+      (isBox(id, a.children, a.role) ? boxAny : leafAny).add(id);
+      if (!metaOf[id]) { metaOf[id] = a.meta[id]; roleOf[id] = a.role[id]; }
+      (a.children[id] ?? []).forEach(walk);
     };
     roots.forEach(walk);
+    return { a, L, roots };
+  });
+  // A node that is ever a box is rendered as a per-state box; the rest are leaf
+  // badges drawn once and moved/faded between states.
+  const badgeIds = [...leafAny].filter((id) => !boxAny.has(id));
+
+  // Pass 2 — per-state box/edge HTML + leaf positions.
+  const states = laid.map(({ a, L, roots }) => {
+    let boxesHtml = "";
+    const walk = (id: string): void => {
+      if (isBox(id, a.children, a.role)) boxesHtml += box(id, L, a.role[id], a.meta[id], theme, subtitleOf(id));
+      (a.children[id] ?? []).forEach(walk);
+    };
+    roots.forEach(walk);
+    const pos: Record<string, { x: number; y: number }> = {};
+    for (const id of badgeIds) if (id in L.X) pos[id] = center(L, id);
     let edgesHtml = "";
     for (const e of a.depEdges) {
       if (!(e.from in L.X) || !(e.to in L.X)) continue;
       edgesHtml += depEdgeStr(e.from, e.to, center(L, e.from), center(L, e.to), e.via, e.toAttr, theme);
     }
-    return { boxes: boxesHtml, edges: edgesHtml, pos, vis };
+    return { boxes: boxesHtml, edges: edgesHtml, pos };
   });
 
-  // union of leaf nodes (everything that isn't a place box) — drawn once.
-  const leaves = [...a.kept, ...Object.values(a.hidden).flat()].filter((id) => a.role[id] !== "place");
-  const badges = [...new Set(leaves)].map((id) => originBadge(id, a.role[id], a.meta[id], theme)).join("");
+  const badges = badgeIds.map((id) => originBadge(id, roleOf[id], metaOf[id], theme)).join("");
+
+  // The VPC (a real place node in app focus) toggles to the network state.
+  const realNodes = new Set(ir.nodes.map((n) => n.id));
+  const expandIndex: Record<string, number> = {};
+  for (const id of variants[0].kept) if (realNodes.has(id) && variants[0].role[id] === "place") expandIndex[id] = 1;
+  const startState = opts.focus === "network" ? 1 : 0;
 
   const META: Record<string, { kind: string; lexicon: string; attrs: unknown }> = {};
   for (const n of ir.nodes) META[n.id] = { kind: n.kind, lexicon: n.lexicon, attrs: n.attrs };
@@ -463,7 +491,7 @@ ${CONTAIN_CSS}
 <body>
 <header class="pin-bar">
   <h1>${esc(title)}</h1>
-  <span class="pin-hint">click a box to expand the plumbing it hides</span>
+  <span class="pin-hint">click the VPC to switch between app and network views</span>
   <label class="pin-theme">theme <select id="pin-theme-select">${themeOptions}</select></label>
 </header>
 <main class="pin-stage" id="pin-stage">${svg}</main>
@@ -479,6 +507,7 @@ const THEMES = ${jsonScriptC(Object.fromEntries(Object.entries(THEMES).map(([k, 
 const STATES = ${jsonScriptC(states)};
 const EXPAND = ${jsonScriptC(expandIndex)};
 const META = ${jsonScriptC(META)};
+const START = ${startState};
 ${CONTAIN_JS}
 </script>
 </body>
@@ -614,5 +643,5 @@ function attrRow(key, value) {
 function fmt(v) { if (v == null) return String(v); if (typeof v === "object") return "$ref" in v ? "→ " + v["$ref"] : JSON.stringify(v); return String(v); }
 function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
 
-applyState(0, true);
+applyState(typeof START === "number" ? START : 0, true);
 `;
