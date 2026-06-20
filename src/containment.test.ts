@@ -75,6 +75,47 @@ describe("renderContainment", () => {
   });
 });
 
+describe("composite-primary grouping", () => {
+  // a net composite (VPC+subnet) and an app composite (ALB+service); the ALB
+  // points at the network's subnet across composites.
+  const cir: GraphIR = {
+    nodes: [
+      { id: "netVpc", kind: "AWS::EC2::VPC", lexicon: "aws", attrs: {}, compositeInstance: "net", compositeParent: "VpcDefault" },
+      { id: "netSubnet", kind: "AWS::EC2::Subnet", lexicon: "aws", attrs: {}, compositeInstance: "net", compositeParent: "VpcDefault" },
+      { id: "appAlb", kind: "AWS::ELBv2::LoadBalancer", lexicon: "aws", attrs: {}, compositeInstance: "app", compositeParent: "FargateAlb" },
+      { id: "appSvc", kind: "AWS::ECS::Service", lexicon: "aws", attrs: {}, compositeInstance: "app", compositeParent: "FargateAlb" },
+    ],
+    edges: [
+      { from: "netSubnet", to: "netVpc", kind: "ref", viaAttr: "VpcId" }, // within net → nest
+      { from: "appAlb", to: "netSubnet", kind: "ref", viaAttr: "Subnets" }, // cross composite → line
+    ],
+    groups: {},
+  };
+  const csvg = renderContainment(cir, {});
+  const rect = (id: string) => {
+    const m = csvg.match(new RegExp(`<g data-node-id="${id}"><rect x="([\\d.]+)" y="([\\d.]+)" width="([\\d.]+)" height="([\\d.]+)"`));
+    return m ? { x: +m[1], y: +m[2], w: +m[3], h: +m[4] } : null;
+  };
+  const within = (a: any, b: any) => a.x >= b.x - 1 && a.y >= b.y - 1 && a.x + a.w <= b.x + b.w + 1 && a.y + a.h <= b.y + b.h + 1;
+
+  it("makes each composite a box holding its members", () => {
+    expect(rect("net")).not.toBeNull();
+    expect(rect("app")).not.toBeNull();
+    expect(within(rect("appAlb"), rect("app"))).toBe(true);
+    expect(within(rect("appSvc"), rect("app"))).toBe(true);
+  });
+
+  it("nests network lives-in within a composite (vpc ⊂ net, subnet ⊂ vpc)", () => {
+    expect(within(rect("netVpc"), rect("net"))).toBe(true);
+    expect(within(rect("netSubnet"), rect("netVpc"))).toBe(true);
+  });
+
+  it("draws cross-composite references as dependency lines", () => {
+    expect(csvg).toContain('data-edge-from="appAlb"');
+    expect(csvg).toContain('data-edge-to="netSubnet"');
+  });
+});
+
 describe("renderContainmentApp (interactive expand)", () => {
   const app = renderContainmentApp(ir, { title: "T" });
 
