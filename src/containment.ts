@@ -25,17 +25,23 @@ import { clip, esc } from "./paint/svg.ts";
 export type Role = "place" | "policy" | "thing" | "plumbing";
 
 const ROLE_RULES: Array<[RegExp, Role]> = [
-  // plumbing first — these would otherwise look like things/places. Subnets are
-  // network detail (AZ duplication etc.): collapse them into the VPC boundary,
-  // recoverable on expand. Also supporting resources (IAM roles, log groups).
-  [/subnet|routetable|\broute\b|routeassociation|gatewayattachment|internetgateway|natgateway|\beip\b|elasticip|ingress|egress|\bacl\b|::role|loggroup/, "plumbing"],
+  // plumbing first — these would otherwise look like things/places. Collapsed
+  // into the nearest place, recoverable on drill-down (expand). Covers network
+  // detail (subnets/AZ duplication, routes, gateways), security policy (security
+  // groups, ingress/egress, NACLs), and supporting resources (IAM roles, logs).
+  [/subnet|routetable|\broute\b|routeassociation|gatewayattachment|internetgateway|natgateway|\beip\b|elasticip|securitygroup|firewall|\bwaf|networkacl|ingress|egress|\bacl\b|::role|loggroup/, "plumbing"],
   [/\bvpc|\bvnet/, "place"],
-  [/securitygroup|firewall|\bwaf|networkacl/, "policy"],
 ];
 
-/** Classify a resource kind into a diagram role. Defaults to "thing". */
-export function roleForKind(kind: string): Role {
+/** Classify a resource kind into a diagram role. Defaults to "thing". In
+ * `detail` mode (the drill-down), subnets and route tables are promoted back to
+ * places so the revealed network has structure (subnet boxes), instead of a flat
+ * pile of plumbing. */
+export function roleForKind(kind: string, detail = false): Role {
   const k = kind.toLowerCase();
+  if (detail && ((/subnet/.test(k) && !/association|group/.test(k)) || (/routetable/.test(k) && !/association/.test(k)))) {
+    return "place";
+  }
   for (const [re, role] of ROLE_RULES) if (re.test(k)) return role;
   return "thing";
 }

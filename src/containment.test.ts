@@ -6,7 +6,7 @@ describe("roleForKind", () => {
   it("classifies places, policies, things, and plumbing", () => {
     expect(roleForKind("AWS::EC2::VPC")).toBe("place");
     expect(roleForKind("AWS::EC2::Subnet")).toBe("plumbing"); // collapsed into the VPC
-    expect(roleForKind("AWS::EC2::SecurityGroup")).toBe("policy");
+    expect(roleForKind("AWS::EC2::SecurityGroup")).toBe("plumbing"); // drill-down only by default
     expect(roleForKind("AWS::EC2::Instance")).toBe("thing");
     expect(roleForKind("AWS::S3::Bucket")).toBe("thing");
     expect(roleForKind("AWS::EC2::RouteTable")).toBe("plumbing");
@@ -27,10 +27,11 @@ const ir: GraphIR = {
     { id: "assets", kind: "AWS::S3::Bucket", lexicon: "aws", attrs: {} },
   ],
   edges: [
-    { from: "subnet", to: "vpc", kind: "ref", viaAttr: "VpcId" }, // lives-in
-    { from: "sg", to: "vpc", kind: "ref", viaAttr: "VpcId" }, // lives-in
-    { from: "web", to: "subnet", kind: "ref", viaAttr: "SubnetId" }, // lives-in
-    { from: "web", to: "sg", kind: "ref", viaAttr: "SecurityGroupIds" }, // dependency
+    { from: "subnet", to: "vpc", kind: "ref", viaAttr: "VpcId" }, // lives-in (collapsed)
+    { from: "sg", to: "vpc", kind: "ref", viaAttr: "VpcId" }, // lives-in (collapsed)
+    { from: "web", to: "subnet", kind: "ref", viaAttr: "SubnetId" }, // lives-in → web ⊂ vpc
+    { from: "web", to: "sg", kind: "ref", viaAttr: "SecurityGroupIds" }, // to hidden sg → no line
+    { from: "web", to: "assets", kind: "ref", viaAttr: "BackupBucket" }, // dependency between kept things
     { from: "routeTable", to: "vpc", kind: "ref", viaAttr: "VpcId" },
   ],
   groups: {},
@@ -55,24 +56,25 @@ describe("renderContainment", () => {
     expect(inside(rectOf("web")!, rectOf("vpc")!)).toBe(true);
   });
 
-  it("keeps a security group in the VPC but draws the dependency as a line", () => {
-    expect(inside(rectOf("sg")!, rectOf("vpc")!)).toBe(true);
-    // web → sg is a dependency (dashed line), not containment
-    expect(svg).toContain('stroke-dasharray="5 5"');
+  it("hides security groups by default (drill-down only)", () => {
+    expect(svg).not.toContain('data-node-id="sg"'); // not on the default diagram
+    expect(rectOf("sg")).toBeNull();
   });
 
   it("makes the dependency lines interactive (rollover/click hooks)", () => {
     expect(svg).toContain('data-edge-from="web"');
-    expect(svg).toContain('data-edge-to="sg"');
+    expect(svg).toContain('data-edge-to="assets"');
     expect(svg).toContain('pointer-events="stroke"'); // wide hit-path
   });
 
   it("notes what the VPC contains and hides (drill-in)", () => {
     const notes = containmentNotes(ir);
     expect(notes.vpc).toContainEqual({ label: "contains", value: expect.stringContaining("web") });
-    // the collapsed subnet + route table are recoverable on expand
-    expect(notes.vpc).toContainEqual({ label: "hides", value: expect.stringContaining("subnet") });
-    expect(notes.vpc.find((r) => r.label === "hides")!.value).toContain("routeTable");
+    // the collapsed subnet, route table, and security group are recoverable on expand
+    const hides = notes.vpc.find((r) => r.label === "hides")!.value;
+    expect(hides).toContain("subnet");
+    expect(hides).toContain("routeTable");
+    expect(hides).toContain("sg");
   });
 });
 
