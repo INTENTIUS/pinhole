@@ -42,7 +42,7 @@ export const defaultPack: SaliencePack = {
     // plumbing first — these would otherwise look like things/places. Collapsed
     // into the nearest place, recoverable on drill-down. Covers network detail,
     // security policy, and supporting resources (IAM roles, logs).
-    [/subnet|routetable|\broute\b|routeassociation|gatewayattachment|internetgateway|natgateway|\beip\b|elasticip|securitygroup|firewall|\bwaf|networkacl|ingress|egress|\bacl\b|::role|loggroup/, "plumbing"],
+    [/subnet|routetable|\broute\b|routeassociation|gatewayattachment|internetgateway|natgateway|\beip\b|elasticip|securitygroup|firewall|\bwaf|networkacl|ingress|egress|\bacl\b|::role|loggroup|targetgroup|listener|taskdefinition/, "plumbing"],
     [/\bvpc|\bvnet/, "place"],
   ],
   networkPlace: /^(?=.*(?:subnet|routetable))(?!.*(?:association|group)).*$/,

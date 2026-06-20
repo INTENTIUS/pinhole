@@ -143,9 +143,12 @@ function analyze(ir: GraphIR, focus: Focus = "app", pack: SaliencePack = default
     if (e.from === e.to) continue;
     if (e.viaAttr && (LIVES_IN.has(e.viaAttr) || SPANS.has(e.viaAttr))) placed.add(e.from);
   }
-  const kindOf = (id: string): string => meta[id].kind.toLowerCase();
+  // Topology hints key on the resource *type* (the last "::" segment), not the
+  // full kind — otherwise a namespace like "ElasticLoadBalancingV2" makes every
+  // sub-resource (listener, target group) match the ingress rule "loadbalanc".
+  const typeOf = (id: string): string => (meta[id].kind.split("::").pop() ?? meta[id].kind).toLowerCase();
   const protectedSubject = (id: string): boolean =>
-    overridden.has(id) || pack.ingress.test(kindOf(id)) || pack.workload.test(kindOf(id)) || pack.valuable.test(kindOf(id));
+    overridden.has(id) || pack.ingress.test(typeOf(id)) || pack.workload.test(typeOf(id)) || pack.valuable.test(typeOf(id));
   for (let changed = true; changed; ) {
     changed = false;
     const di: Record<string, number> = {};
@@ -246,8 +249,8 @@ function analyze(ir: GraphIR, focus: Focus = "app", pack: SaliencePack = default
   const byComposite: Record<string, string[]> = {};
   for (const id of kept) if (composite[id]) (byComposite[composite[id]] = byComposite[composite[id]] || []).push(id);
   for (const members of Object.values(byComposite)) {
-    const ingress = members.filter((id) => pack.ingress.test(meta[id].kind.toLowerCase()));
-    const workload = members.filter((id) => pack.workload.test(meta[id].kind.toLowerCase()));
+    const ingress = members.filter((id) => pack.ingress.test(typeOf(id)));
+    const workload = members.filter((id) => pack.workload.test(typeOf(id)));
     for (const i of ingress) for (const w of workload) {
       if (i !== w && !existing.has(`${i}>${w}`)) { implied.push({ from: i, to: w }); existing.add(`${i}>${w}`); }
     }
