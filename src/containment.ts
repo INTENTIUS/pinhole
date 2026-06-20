@@ -24,17 +24,30 @@ import { clip, esc } from "./paint/svg.ts";
 
 export type Role = "place" | "policy" | "thing" | "plumbing";
 
+/** What the diagram is *about* — drives what's salient. `app` (default): the
+ * network is light context, the workload is the subject. `network`: VPC/subnets
+ * are the structured subject. `security`: security groups are first-class. */
+export type Focus = "app" | "network" | "security";
+
 const ROLE_RULES: Array<[RegExp, Role]> = [
-  // plumbing first — these would otherwise look like things/places. Includes
-  // supporting resources (IAM roles, log groups) that add little to a diagram.
-  [/routetable|\broute\b|routeassociation|gatewayattachment|internetgateway|natgateway|\beip\b|elasticip|dbsubnetgroup|ingress|egress|\bacl\b|::role|loggroup/, "plumbing"],
-  [/\bvpc|\bvnet|subnet/, "place"],
-  [/securitygroup|firewall|\bwaf|networkacl/, "policy"],
+  // plumbing first — these would otherwise look like things/places. Collapsed
+  // into the nearest place, recoverable on drill-down (expand). Covers network
+  // detail (subnets/AZ duplication, routes, gateways), security policy (security
+  // groups, ingress/egress, NACLs), and supporting resources (IAM roles, logs).
+  [/subnet|routetable|\broute\b|routeassociation|gatewayattachment|internetgateway|natgateway|\beip\b|elasticip|securitygroup|firewall|\bwaf|networkacl|ingress|egress|\bacl\b|::role|loggroup/, "plumbing"],
+  [/\bvpc|\bvnet/, "place"],
 ];
 
-/** Classify a resource kind into a diagram role. Defaults to "thing". */
-export function roleForKind(kind: string): Role {
+/** Classify a resource kind into a diagram role, given the diagram's focus.
+ * Under `network` focus subnets/route tables become places (structured boxes);
+ * under `security` focus security groups are first-class policies. Otherwise they
+ * are plumbing — collapsed into the nearest place, recoverable on drill-down. */
+export function roleForKind(kind: string, focus: Focus = "app"): Role {
   const k = kind.toLowerCase();
+  if (focus === "network" && ((/subnet/.test(k) && !/association|group/.test(k)) || (/routetable/.test(k) && !/association/.test(k)))) {
+    return "place";
+  }
+  if (focus === "security" && /securitygroup|firewall|\bwaf|networkacl/.test(k)) return "policy";
   for (const [re, role] of ROLE_RULES) if (re.test(k)) return role;
   return "thing";
 }
@@ -56,6 +69,8 @@ const GAP = 18;
 export interface ContainmentOptions {
   title?: string;
   theme?: Theme;
+  /** What the diagram is about (default "app"). */
+  focus?: Focus;
 }
 
 interface Layout {
@@ -63,7 +78,8 @@ interface Layout {
   H: Record<string, number>;
   X: Record<string, number>;
   Y: Record<string, number>;
-  grid: Record<string, { cols: number; cellW: number; cellH: number }>;
+  /** Row-packing per box: each row's y offset and its children's x offsets. */
+  pack: Record<string, Array<{ y: number; items: Array<{ id: string; x: number }> }>>;
 }
 
 const uniq = (xs: string[]): string[] => [...new Set(xs)];
@@ -75,26 +91,34 @@ interface Analysis {
   parent: Record<string, string>;
   children: Record<string, string[]>;
   depEdges: Array<{ from: string; to: string; via?: string; toAttr?: string }>;
+  /** Edges the IR doesn't carry but a composite implies (an ALB fronts the
+   * service it was created with) — drawn as a hint, distinct from real refs. */
+  implied: Array<{ from: string; to: string }>;
   /** place id → plumbing ids that live in it (dropped from the diagram). */
   hidden: Record<string, string[]>;
 }
 
+const INGRESS_RE = /loadbalanc|\balb\b|gateway|apigateway|cloudfront|distribution/;
+const WORKLOAD_RE = /\bservice\b|\binstance\b|lambda|function|\btask\b|deployment|statefulset|\bpod\b/;
+
 /** Salience + containment of an IR.
  *
- * The primary box is the **composite instance** (chant tags each node with the
- * composite that expanded it) — so a `VpcDefault` and a `FargateAlb` each become
- * a box holding their members. *Within* a composite, network lives-in refs nest
- * further (a subnet inside its VPC). A lives-in/spans ref that crosses composites
- * (the app's ALB pointing at the network's subnets) stays a dependency line.
- * Plumbing is dropped and remembered as hidden under its box. */
-function analyze(ir: GraphIR): Analysis {
+ * **Network containment is primary** — a lives-in/spans ref (VpcId/SubnetId/
+ * Subnets) nests a resource in its place (subnet ⊂ VPC), so the VPC encapsulates
+ * everything that lives in it, regardless of which composite expanded it. The
+ * **composite is a secondary grouping**: a composite's members that have *no*
+ * network home (an ECS cluster/service/task definition) gather into a sub-box
+ * nested inside the network their networked siblings anchor to. Only refs that
+ * are neither lives-in nor spans stay as dependency lines, and plumbing is hidden
+ * under the place it lives in. */
+function analyze(ir: GraphIR, focus: Focus = "app"): Analysis {
   const role: Record<string, Role> = {};
   const kept = new Set<string>();
   const meta: Record<string, { kind: string; lexicon: string }> = {};
   const composite: Record<string, string> = {};
   const compositeType: Record<string, string> = {};
   for (const n of ir.nodes) {
-    role[n.id] = roleForKind(n.kind);
+    role[n.id] = roleForKind(n.kind, focus);
     meta[n.id] = { kind: n.kind, lexicon: n.lexicon };
     if (role[n.id] !== "plumbing") kept.add(n.id);
     if (n.compositeInstance) {
@@ -102,60 +126,129 @@ function analyze(ir: GraphIR): Analysis {
       compositeType[n.compositeInstance] = n.compositeParent ?? "composite";
     }
   }
-  // A synthetic box per composite instance that has kept members.
-  for (const inst of new Set(Object.values(composite))) {
-    const member = ir.nodes.find((n) => composite[n.id] === inst && kept.has(n.id));
-    if (!member) continue;
-    role[inst] = "place";
-    meta[inst] = { kind: compositeType[inst], lexicon: member.lexicon };
-    kept.add(inst);
-  }
-  // A ref is "cross-composite" only when both ends are in *different* composites
-  // — then it's a dependency line. If either end has no composite, lives-in still
-  // nests (plain network containment).
-  const crossComposite = (a: string, b: string): boolean => !!composite[a] && !!composite[b] && composite[a] !== composite[b];
 
-  const parent: Record<string, string> = {};
-  const depEdges: Array<{ from: string; to: string; via?: string; toAttr?: string }> = [];
-  const hidden: Record<string, string[]> = {};
-  const spans: Array<{ from: string; to: string }> = [];
+  // Topology pass: infer *incidental* resources from the relationship shape,
+  // rather than hardcoding kinds. Counting only dependency refs (not containment),
+  // two unambiguous shapes are incidental:
+  //  - a single-attachment component: nothing points at it and it points at
+  //    exactly one thing (a listener → its ALB);
+  //  - a relationship-isolated node parked in a place: no dependency refs either
+  //    way, only a containment ref (a target group whose only edge is its VPC).
+  // These collapse to drill-down. Hubs, multi-dependency subjects (the service),
+  // and standalone or referenced resources (a bucket) survive — degree alone
+  // can't tell a valuable leaf from config, so we don't guess on those.
+  const depIn: Record<string, number> = {};
+  const depOut: Record<string, number> = {};
+  const placed = new Set<string>();
   for (const e of ir.edges) {
     if (e.from === e.to) continue;
-    const livesIn = !!(e.viaAttr && LIVES_IN.has(e.viaAttr));
-    const spansAttr = !!(e.viaAttr && SPANS.has(e.viaAttr));
-    if (livesIn && kept.has(e.to) && !kept.has(e.from)) {
-      (hidden[e.to] = hidden[e.to] || []).push(e.from); // plumbing hidden in a place
-      continue;
-    }
-    if (!kept.has(e.from) || !kept.has(e.to)) continue;
-    if ((livesIn || spansAttr) && crossComposite(e.from, e.to)) {
-      depEdges.push({ from: e.from, to: e.to, via: e.viaAttr, toAttr: e.toAttr }); // cross-composite → line
-    } else if (livesIn) {
-      if (!parent[e.from]) parent[e.from] = e.to; // network nest within a composite
-    } else if (spansAttr) {
-      spans.push({ from: e.from, to: e.to });
-    } else {
-      depEdges.push({ from: e.from, to: e.to, via: e.viaAttr, toAttr: e.toAttr });
+    if (e.viaAttr && (LIVES_IN.has(e.viaAttr) || SPANS.has(e.viaAttr))) { placed.add(e.from); continue; }
+    depOut[e.from] = (depOut[e.from] ?? 0) + 1;
+    depIn[e.to] = (depIn[e.to] ?? 0) + 1;
+  }
+  for (const n of ir.nodes) {
+    if (role[n.id] !== "thing") continue; // never demote places/policies here
+    const di = depIn[n.id] ?? 0;
+    const dy = depOut[n.id] ?? 0;
+    if ((di === 0 && dy === 1) || (di === 0 && dy === 0 && placed.has(n.id))) {
+      role[n.id] = "plumbing";
+      kept.delete(n.id);
     }
   }
-  for (const s of spans) if (!parent[s.from]) parent[s.from] = parent[s.to] ?? s.to;
 
-  // Members with no network parent fall to their composite box.
+  // Where each node nests: its lives-in target, or (failing that) what it spans.
+  const nestTarget: Record<string, string> = {};
+  for (const e of ir.edges) if (e.viaAttr && LIVES_IN.has(e.viaAttr) && !nestTarget[e.from]) nestTarget[e.from] = e.to;
+  for (const e of ir.edges) if (e.viaAttr && SPANS.has(e.viaAttr) && !nestTarget[e.from]) nestTarget[e.from] = e.to;
+
+  // The nearest *kept place* a node lives in, walking the chain through collapsed
+  // plumbing (an instance → its subnet → the VPC resolves to the VPC).
+  const homeOf = (id: string): string | undefined => {
+    let cur: string | undefined = id;
+    const seen = new Set<string>();
+    while (cur != null && !seen.has(cur)) {
+      seen.add(cur);
+      const t: string | undefined = nestTarget[cur];
+      if (t == null) return undefined;
+      if (kept.has(t) && role[t] === "place") return t;
+      cur = t;
+    }
+    return undefined;
+  };
+
+  // Nest everything into the nearest place it lives in — including secondary
+  // places (a subnet nests in its VPC; in network focus an instance nests in its
+  // subnet). The top place (the VPC) has no home, so it stays a root.
+  const parent: Record<string, string> = {};
   for (const id of kept) {
-    if (parent[id] || !composite[id] || composite[id] === id) continue;
-    if (kept.has(composite[id])) parent[id] = composite[id];
+    const h = homeOf(id);
+    if (h && h !== id) parent[id] = h;
   }
+
+  // A composite's members with no network home gather into a sub-box, nested in
+  // the place its networked siblings anchor to.
+  const anchor: Record<string, string> = {};
+  for (const id of kept) {
+    const inst = composite[id];
+    if (inst && parent[id] && !(inst in anchor)) anchor[inst] = parent[id];
+  }
+  const orphans: Record<string, string[]> = {};
+  for (const id of kept) {
+    const inst = composite[id];
+    if (!inst || parent[id] || role[id] === "place") continue;
+    (orphans[inst] = orphans[inst] || []).push(id);
+  }
+  for (const inst of Object.keys(orphans)) {
+    role[inst] = "place";
+    meta[inst] = { kind: compositeType[inst] ?? "composite", lexicon: meta[orphans[inst][0]].lexicon };
+    kept.add(inst);
+    if (anchor[inst]) parent[inst] = anchor[inst];
+    for (const o of orphans[inst]) parent[o] = inst;
+  }
+
+  // Dependency lines: kept→kept refs that didn't become containment.
+  const depEdges: Array<{ from: string; to: string; via?: string; toAttr?: string }> = [];
+  const seenEdge = new Set<string>();
+  for (const e of ir.edges) {
+    if (e.from === e.to || !kept.has(e.from) || !kept.has(e.to)) continue;
+    if (e.viaAttr && (LIVES_IN.has(e.viaAttr) || SPANS.has(e.viaAttr))) continue;
+    const key = `${e.from}>${e.to}`;
+    if (seenEdge.has(key)) continue;
+    seenEdge.add(key);
+    depEdges.push({ from: e.from, to: e.to, via: e.viaAttr, toAttr: e.toAttr });
+  }
+
   const children: Record<string, string[]> = {};
   for (const id of kept) if (parent[id]) (children[parent[id]] = children[parent[id]] || []).push(id);
 
-  // Plumbing not already hidden under a place → hide under its composite box.
-  const hiddenSet = new Set(Object.values(hidden).flat());
-  for (const n of ir.nodes) {
-    if (role[n.id] !== "plumbing" || hiddenSet.has(n.id)) continue;
-    const inst = composite[n.id];
-    if (inst && kept.has(inst)) (hidden[inst] = hidden[inst] || []).push(n.id);
+  // Implied edges: the IR may not connect an ingress to its workload (the
+  // listener→target-group→service refs aren't captured), but a composite implies
+  // it. Within each composite, connect a kept ingress (ALB/gateway) to a kept
+  // workload (service/instance/function) when no real ref already links them.
+  const implied: Array<{ from: string; to: string }> = [];
+  const existing = new Set<string>();
+  for (const e of depEdges) { existing.add(`${e.from}>${e.to}`); existing.add(`${e.to}>${e.from}`); }
+  const byComposite: Record<string, string[]> = {};
+  for (const id of kept) if (composite[id]) (byComposite[composite[id]] = byComposite[composite[id]] || []).push(id);
+  for (const members of Object.values(byComposite)) {
+    const ingress = members.filter((id) => INGRESS_RE.test(meta[id].kind.toLowerCase()));
+    const workload = members.filter((id) => WORKLOAD_RE.test(meta[id].kind.toLowerCase()));
+    for (const i of ingress) for (const w of workload) {
+      if (i !== w && !existing.has(`${i}>${w}`)) { implied.push({ from: i, to: w }); existing.add(`${i}>${w}`); }
+    }
   }
-  return { role, kept, meta, parent, children, depEdges, hidden };
+
+  // Plumbing (incl. collapsed subnets) is hidden under the place it lives in,
+  // else its composite's sub-box — recoverable by expanding that box.
+  const hidden: Record<string, string[]> = {};
+  for (const n of ir.nodes) {
+    if (role[n.id] !== "plumbing") continue;
+    const h = homeOf(n.id);
+    const inst = composite[n.id];
+    const home = h && kept.has(h) ? h : inst && kept.has(inst) ? inst : inst ? anchor[inst] : undefined;
+    if (home && kept.has(home)) (hidden[home] = hidden[home] || []).push(n.id);
+  }
+  return { role, kept, meta, parent, children, depEdges, implied, hidden };
 }
 
 /** Per-node inspector notes for the containment view: what a place *contains*
@@ -185,7 +278,9 @@ function computeLayout(
   children: Record<string, string[]>,
   role: Record<string, Role>,
 ): { L: Layout; canvasW: number; canvasH: number } {
-  const L: Layout = { W: {}, H: {}, X: {}, Y: {}, grid: {} };
+  const L: Layout = { W: {}, H: {}, X: {}, Y: {}, pack: {} };
+  // Size bottom-up with greedy row packing (variable cell widths) so a box hugs
+  // its contents instead of an n×n grid of the widest child.
   const size = (id: string): void => {
     const ch = children[id] ?? [];
     if (ch.length === 0) {
@@ -194,27 +289,37 @@ function computeLayout(
       return;
     }
     ch.forEach(size);
-    const cols = Math.ceil(Math.sqrt(ch.length));
-    const cellW = Math.max(...ch.map((c) => L.W[c]));
-    const cellH = Math.max(...ch.map((c) => L.H[c]));
-    const rows = Math.ceil(ch.length / cols);
-    L.W[id] = cols * cellW + (cols - 1) * GAP + 2 * PAD;
-    L.H[id] = BOX_TITLE + rows * cellH + (rows - 1) * GAP + 2 * PAD;
-    L.grid[id] = { cols, cellW, cellH };
+    const widest = Math.max(...ch.map((c) => L.W[c]));
+    const avg = ch.reduce((s, c) => s + L.W[c], 0) / ch.length;
+    const target = Math.max(widest, Math.ceil(Math.sqrt(ch.length)) * (avg + GAP));
+    const pack: Array<{ y: number; items: Array<{ id: string; x: number }> }> = [];
+    let row: Array<{ id: string; x: number }> = [];
+    let rowW = PAD;
+    let y = BOX_TITLE + PAD;
+    let maxRowW = 0;
+    const flush = (): void => {
+      if (!row.length) return;
+      const rh = Math.max(...row.map((it) => L.H[it.id]));
+      pack.push({ y, items: row });
+      maxRowW = Math.max(maxRowW, rowW - GAP + PAD);
+      y += rh + GAP;
+      row = [];
+      rowW = PAD;
+    };
+    for (const c of ch) {
+      if (row.length && rowW + L.W[c] > target + PAD) flush();
+      row.push({ id: c, x: rowW });
+      rowW += L.W[c] + GAP;
+    }
+    flush();
+    L.W[id] = Math.max(maxRowW, BOX_TITLE);
+    L.H[id] = y - GAP + PAD;
+    L.pack[id] = pack;
   };
   const place = (id: string, x: number, y: number): void => {
     L.X[id] = x;
     L.Y[id] = y;
-    const ch = children[id] ?? [];
-    if (ch.length === 0) return;
-    const { cols, cellW, cellH } = L.grid[id];
-    const cx0 = x + PAD;
-    const cy0 = y + BOX_TITLE + PAD;
-    ch.forEach((c, i) => {
-      const col = i % cols;
-      const row = Math.floor(i / cols);
-      place(c, cx0 + col * (cellW + GAP) + (cellW - L.W[c]) / 2, cy0 + row * (cellH + GAP) + (cellH - L.H[c]) / 2);
-    });
+    for (const r of L.pack[id] ?? []) for (const it of r.items) place(it.id, x + it.x, y + r.y);
   };
   roots.forEach(size);
   let rx = MARGIN;
@@ -230,7 +335,7 @@ function computeLayout(
 /** Render a graph IR as a salience-filtered containment diagram (SVG string). */
 export function renderContainment(ir: GraphIR, opts: ContainmentOptions = {}): string {
   const theme = opts.theme ?? getTheme();
-  const { role, kept, meta, parent, children, depEdges } = analyze(ir);
+  const { role, kept, meta, parent, children, depEdges, implied } = analyze(ir, opts.focus ?? "app");
   const roots = [...kept].filter((id) => !parent[id]).sort();
   const { L, canvasW, canvasH } = computeLayout(roots, children, role);
 
@@ -248,19 +353,8 @@ export function renderContainment(ir: GraphIR, opts: ContainmentOptions = {}): s
   // Dependency lines as interactive edge groups — same hooks the HTML artifact
   // uses, so hover shows the reference + ref value and click pins the relationship.
   let lines = "";
-  for (const e of depEdges) {
-    const a = center(e.from);
-    const b = center(e.to);
-    const d = `M ${a.x} ${a.y} C ${a.x} ${(a.y + b.y) / 2}, ${b.x} ${(a.y + b.y) / 2}, ${b.x} ${b.y}`;
-    const attrs =
-      ` data-edge-from="${esc(e.from)}" data-edge-to="${esc(e.to)}"` +
-      (e.via ? ` data-edge-via="${esc(e.via)}"` : "") +
-      (e.toAttr ? ` data-edge-to-attr="${esc(e.toAttr)}"` : "");
-    lines +=
-      `<g${attrs}>` +
-      `<path class="pin-edge-line" d="${esc(d)}" fill="none" stroke="${v(theme, "edge")}" stroke-width="1.4" stroke-linecap="round" stroke-dasharray="5 5"/>` +
-      `<path d="${esc(d)}" fill="none" stroke="transparent" stroke-width="14" stroke-linecap="round" pointer-events="stroke"/></g>`;
-  }
+  for (const e of depEdges) lines += depEdgeStr(e.from, e.to, center(e.from), center(e.to), e.via, e.toAttr, theme);
+  for (const e of implied) lines += depEdgeStr(e.from, e.to, center(e.from), center(e.to), undefined, undefined, theme, true);
 
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${Math.ceil(canvasW)} ${Math.ceil(canvasH)}" ` +
@@ -276,20 +370,23 @@ export function renderContainment(ir: GraphIR, opts: ContainmentOptions = {}): s
   );
 }
 
-/** A place/container box: rounded rect, a title row with its glyph, children
- * drawn separately on top. */
-function box(id: string, L: Layout, role: Role, m: { kind: string; lexicon: string }, theme: Theme): string {
+/** A place/container box: rounded rect, a title row with its glyph (and an
+ * optional info-bar subtitle, e.g. a VPC's CIDR), children drawn over it. */
+function box(id: string, L: Layout, role: Role, m: { kind: string; lexicon: string }, theme: Theme, subtitle?: string): string {
   const x = L.X[id];
   const y = L.Y[id];
   const w = L.W[id];
   const h = L.H[id];
   const glyph = resolveGlyph({ lexicon: m.lexicon, kind: m.kind });
   const stroke = role === "place" ? v(theme, "accentStroke") : v(theme, "neutralStroke");
+  // only annotate boxes wide enough to hold it, so a CIDR doesn't run off a subnet
+  const room = Math.floor((w - 52) / 7.5) - id.length - 3;
+  const sub = subtitle && w >= 200 && room > 4 ? `<tspan fill="${v(theme, "textFaint")}" font-weight="400"> · ${esc(clip(subtitle, room))}</tspan>` : "";
   return (
     `<g data-node-id="${esc(id)}">` +
     `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="14" fill="${v(theme, "neutralFill")}" fill-opacity="0.5" stroke="${stroke}" stroke-width="1.4"/>` +
     glyphAt(glyph.body, x + 14, y + 7, 18, theme) +
-    `<text x="${x + 40}" y="${y + 21}" fill="${v(theme, "text")}" font-size="13" font-weight="700">${esc(clip(id, Math.floor((w - 52) / 7.5)))}</text>` +
+    `<text x="${x + 40}" y="${y + 21}" fill="${v(theme, "text")}" font-size="13" font-weight="700">${esc(clip(id, Math.floor((w - 52) / 7.5)))}${sub}</text>` +
     `</g>`
   );
 }
@@ -341,17 +438,26 @@ function originBadge(id: string, role: Role, m: { kind: string; lexicon: string 
     `<rect x="-24" y="-24" width="48" height="48" rx="13" fill="${v(theme, "neutralFill")}" stroke="${v(theme, "neutralStroke")}" stroke-width="1.4"/>` +
     `<rect x="-24" y="-24" width="48" height="4" rx="2" fill="${v(theme, "neutralBar")}"/>` +
     `<g transform="translate(-13 -12) scale(${k})" fill="none" stroke="${v(theme, "textFaint")}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${resolveGlyph({ lexicon: m.lexicon, kind: m.kind }).body}</g>` +
-    `<text y="34" text-anchor="middle" fill="${v(theme, "text")}" font-size="11" font-weight="600">${esc(clip(id, 16))}</text>` +
+    `<text class="pin-clabel" y="33" text-anchor="middle" fill="${v(theme, "text")}" font-size="10" font-weight="600">${esc(clip(id, 14))}</text>` +
     `</g>`
   );
 }
 
-/** An interactive dependency edge group between two centres. */
-function depEdgeStr(from: string, to: string, a: { x: number; y: number }, b: { x: number; y: number }, via: string | undefined, toAttr: string | undefined, theme: Theme): string {
+/** An interactive edge group between two centres. A real reference is a dashed
+ * line in the edge colour; an `implied` edge (composite-inferred, e.g. an ALB
+ * fronting its service) is a dotted accent line, flagged for the tooltip. */
+function depEdgeStr(from: string, to: string, a: { x: number; y: number }, b: { x: number; y: number }, via: string | undefined, toAttr: string | undefined, theme: Theme, implied = false): string {
   const d = `M ${a.x} ${a.y} C ${a.x} ${(a.y + b.y) / 2}, ${b.x} ${(a.y + b.y) / 2}, ${b.x} ${b.y}`;
-  const attrs = ` data-edge-from="${esc(from)}" data-edge-to="${esc(to)}"` + (via ? ` data-edge-via="${esc(via)}"` : "") + (toAttr ? ` data-edge-to-attr="${esc(toAttr)}"` : "");
+  const attrs =
+    ` data-edge-from="${esc(from)}" data-edge-to="${esc(to)}"` +
+    (via ? ` data-edge-via="${esc(via)}"` : "") +
+    (toAttr ? ` data-edge-to-attr="${esc(toAttr)}"` : "") +
+    (implied ? ` data-edge-implied="1"` : "");
+  const stroke = implied ? v(theme, "accentBar") : v(theme, "edge");
+  const dash = implied ? "2 5" : "5 5";
+  const op = implied ? ` opacity="0.75"` : "";
   return (
-    `<g${attrs}><path class="pin-edge-line" d="${esc(d)}" fill="none" stroke="${v(theme, "edge")}" stroke-width="1.4" stroke-linecap="round" stroke-dasharray="5 5"/>` +
+    `<g${attrs}><path class="pin-edge-line" d="${esc(d)}" fill="none" stroke="${stroke}" stroke-width="1.4" stroke-linecap="round" stroke-dasharray="${dash}"${op}/>` +
     `<path d="${esc(d)}" fill="none" stroke="transparent" stroke-width="14" stroke-linecap="round" pointer-events="stroke"/></g>`
   );
 }
@@ -364,49 +470,74 @@ function jsonScriptC(value: unknown): string {
 export function renderContainmentApp(ir: GraphIR, opts: ContainmentOptions = {}): string {
   const theme = opts.theme ?? getTheme();
   const title = opts.title ?? "Infrastructure";
-  const a = analyze(ir);
-  const roots = [...a.kept].filter((id) => !a.parent[id]).sort();
 
-  // states: collapsed, then one per place that hides plumbing (its hidden
-  // plumbing added as children, so the layout reflows to make room).
-  const expandable = roots.flatMap(function flat(id): string[] {
-    const here = a.hidden[id]?.length ? [id] : [];
-    return here.concat((a.children[id] ?? []).flatMap(flat));
-  });
-  const stateDefs: Array<{ expand?: string }> = [{}, ...expandable.map((id) => ({ expand: id }))];
-  const expandIndex: Record<string, number> = {};
-  expandable.forEach((id, i) => (expandIndex[id] = i + 1));
-
+  // Two focus states: "app" (network is light context) and "network" (subnets/
+  // route tables are structured boxes). Clicking the VPC toggles between them —
+  // that's the drill-down. Leaf nodes are drawn once and glide between states.
+  const variants = [analyze(ir, "app"), analyze(ir, "network")];
+  const attrs: Record<string, Record<string, unknown>> = {};
+  for (const n of ir.nodes) attrs[n.id] = n.attrs;
+  const subtitleOf = (id: string): string | undefined => {
+    const c = attrs[id]?.CidrBlock ?? attrs[id]?.cidr;
+    return typeof c === "string" ? c : undefined;
+  };
   const center = (L: Layout, id: string) => ({ x: Math.round(L.X[id] + L.W[id] / 2), y: Math.round(L.Y[id] + L.H[id] / 2) });
+
+  // Pass 1 — lay out each variant; collect which ids are boxes vs leaves anywhere.
   let maxW = 480;
   let maxH = 300;
-  const states = stateDefs.map((def) => {
-    const children: Record<string, string[]> = {};
-    for (const k of Object.keys(a.children)) children[k] = a.children[k].slice();
-    if (def.expand) children[def.expand] = (children[def.expand] ?? []).concat(a.hidden[def.expand] ?? []);
-    const { L, canvasW, canvasH } = computeLayout(roots, children, a.role);
+  const boxAny = new Set<string>();
+  const leafAny = new Set<string>();
+  const metaOf: Record<string, { kind: string; lexicon: string }> = {};
+  const roleOf: Record<string, Role> = {};
+  const laid = variants.map((a) => {
+    const roots = [...a.kept].filter((id) => !a.parent[id]).sort();
+    const { L, canvasW, canvasH } = computeLayout(roots, a.children, a.role);
     maxW = Math.max(maxW, canvasW);
     maxH = Math.max(maxH, canvasH);
-    const vis = Object.keys(L.X);
-    let boxesHtml = "";
-    const pos: Record<string, { x: number; y: number }> = {};
     const walk = (id: string): void => {
-      if (isBox(id, children, a.role)) boxesHtml += box(id, L, a.role[id], a.meta[id], theme);
-      else pos[id] = center(L, id);
-      (children[id] ?? []).forEach(walk);
+      (isBox(id, a.children, a.role) ? boxAny : leafAny).add(id);
+      if (!metaOf[id]) { metaOf[id] = a.meta[id]; roleOf[id] = a.role[id]; }
+      (a.children[id] ?? []).forEach(walk);
     };
     roots.forEach(walk);
+    return { a, L, roots };
+  });
+  // A node that is ever a box is rendered as a per-state box; the rest are leaf
+  // badges drawn once and moved/faded between states.
+  const badgeIds = [...leafAny].filter((id) => !boxAny.has(id));
+
+  // Pass 2 — per-state box/edge HTML + leaf positions.
+  const states = laid.map(({ a, L, roots }) => {
+    let boxesHtml = "";
+    const walk = (id: string): void => {
+      if (isBox(id, a.children, a.role)) boxesHtml += box(id, L, a.role[id], a.meta[id], theme, subtitleOf(id));
+      (a.children[id] ?? []).forEach(walk);
+    };
+    roots.forEach(walk);
+    const pos: Record<string, { x: number; y: number }> = {};
+    for (const id of badgeIds) if (id in L.X) pos[id] = center(L, id);
     let edgesHtml = "";
     for (const e of a.depEdges) {
       if (!(e.from in L.X) || !(e.to in L.X)) continue;
       edgesHtml += depEdgeStr(e.from, e.to, center(L, e.from), center(L, e.to), e.via, e.toAttr, theme);
     }
-    return { boxes: boxesHtml, edges: edgesHtml, pos, vis };
+    for (const e of a.implied) {
+      if (!(e.from in L.X) || !(e.to in L.X)) continue;
+      edgesHtml += depEdgeStr(e.from, e.to, center(L, e.from), center(L, e.to), undefined, undefined, theme, true);
+    }
+    return { boxes: boxesHtml, edges: edgesHtml, pos };
   });
+  // the network view (index 1) is dense → badges go icon-only (label on hover).
+  const stateMeta = states.map((s, i) => ({ ...s, dense: i === 1 }));
 
-  // union of leaf nodes (everything that isn't a place box) — drawn once.
-  const leaves = [...a.kept, ...Object.values(a.hidden).flat()].filter((id) => a.role[id] !== "place");
-  const badges = [...new Set(leaves)].map((id) => originBadge(id, a.role[id], a.meta[id], theme)).join("");
+  const badges = badgeIds.map((id) => originBadge(id, roleOf[id], metaOf[id], theme)).join("");
+
+  // The VPC (a real place node in app focus) toggles to the network state.
+  const realNodes = new Set(ir.nodes.map((n) => n.id));
+  const expandIndex: Record<string, number> = {};
+  for (const id of variants[0].kept) if (realNodes.has(id) && variants[0].role[id] === "place") expandIndex[id] = 1;
+  const startState = opts.focus === "network" ? 1 : 0;
 
   const META: Record<string, { kind: string; lexicon: string; attrs: unknown }> = {};
   for (const n of ir.nodes) META[n.id] = { kind: n.kind, lexicon: n.lexicon, attrs: n.attrs };
@@ -433,7 +564,7 @@ ${CONTAIN_CSS}
 <body>
 <header class="pin-bar">
   <h1>${esc(title)}</h1>
-  <span class="pin-hint">click a box to expand the plumbing it hides</span>
+  <span class="pin-hint">click the VPC to switch between app and network views</span>
   <label class="pin-theme">theme <select id="pin-theme-select">${themeOptions}</select></label>
 </header>
 <main class="pin-stage" id="pin-stage">${svg}</main>
@@ -446,9 +577,10 @@ ${CONTAIN_CSS}
 </div>
 <script>
 const THEMES = ${jsonScriptC(Object.fromEntries(Object.entries(THEMES).map(([k, t]) => [k, t.tokens])))};
-const STATES = ${jsonScriptC(states)};
+const STATES = ${jsonScriptC(stateMeta)};
 const EXPAND = ${jsonScriptC(expandIndex)};
 const META = ${jsonScriptC(META)};
+const START = ${startState};
 ${CONTAIN_JS}
 </script>
 </body>
@@ -469,6 +601,8 @@ const CONTAIN_CSS = `<style>
   .pin-cnode { transition: transform .55s cubic-bezier(.4,0,.2,1), opacity .35s ease; cursor: pointer; }
   .pin-cnode.pin-instant { transition: none; }
   .pin-cnode:hover { filter: drop-shadow(0 0 6px var(--pin-accentBar, #4C8DFF)); }
+  .pin-stage.pin-dense .pin-clabel { display: none; } /* dense (network) view: icon-only, label on hover */
+  .pin-implied { opacity: .75; }
   #pin-boxes [data-node-id] { cursor: pointer; }
   #pin-boxes [data-node-id]:hover rect { stroke: var(--pin-accentBar, #4C8DFF); }
   .pin-edge-line { transition: opacity .3s ease; }
@@ -509,6 +643,7 @@ document.getElementById("pin-theme-select").addEventListener("change", (e) => {
 function applyState(i, instant) {
   const s = STATES[i]; if (!s) return;
   cur = i;
+  stage.classList.toggle("pin-dense", !!s.dense);
   boxLayer.innerHTML = s.boxes;
   edgeLayer.innerHTML = s.edges;
   for (const id in cnodes) {
@@ -545,7 +680,10 @@ stage.addEventListener("mousemove", (e) => {
   const ed = edgeFrom(e.target);
   if (ed) {
     const from = ed.getAttribute("data-edge-from"), to = ed.getAttribute("data-edge-to"), via = ed.getAttribute("data-edge-via"), ta = ed.getAttribute("data-edge-to-attr");
-    tip.innerHTML = "<b>" + esc(from) + "</b>" + (via ? "." + esc(via) : "") + " &rarr; <b>" + esc(to) + "</b>" + (ta ? "." + esc(ta) : "") + "<span class='pin-ref'>" + esc(refValue(from, via, to, ta)) + "</span>";
+    const detail = ed.getAttribute("data-edge-implied")
+      ? "<span class='pin-ref'>implied — created in the same composite</span>"
+      : "<span class='pin-ref'>" + esc(refValue(from, via, to, ta)) + "</span>";
+    tip.innerHTML = "<b>" + esc(from) + "</b>" + (via ? "." + esc(via) : "") + " &rarr; <b>" + esc(to) + "</b>" + (ta ? "." + esc(ta) : "") + detail;
     return tipAt(e);
   }
   tip.hidden = true;
@@ -574,6 +712,11 @@ function nodeBody(id, m) {
 function edgeBody(ed) {
   const from = ed.getAttribute("data-edge-from"), to = ed.getAttribute("data-edge-to"), via = ed.getAttribute("data-edge-via"), ta = ed.getAttribute("data-edge-to-attr");
   const k = (m) => (m ? " · " + m.kind : "");
+  if (ed.getAttribute("data-edge-implied")) {
+    return "<h2>" + esc(from) + " &rarr; " + esc(to) + "</h2><div class='pin-sub'>implied relationship</div><div class='pin-attrs'>" +
+      attrRow("ingress", from + k(META[from])) + attrRow("workload", to + k(META[to])) +
+      attrRow("source", "inferred from the composite — the IR has no direct reference") + "</div>";
+  }
   return "<h2>" + esc(from) + " &rarr; " + esc(to) + "</h2><div class='pin-sub'>reference</div><div class='pin-attrs'>" +
     attrRow("consumer", from + k(META[from])) + attrRow("via", via || "—") + attrRow("producer", to + k(META[to])) + attrRow("ref", refValue(from, via, to, ta)) + "</div>";
 }
@@ -584,5 +727,5 @@ function attrRow(key, value) {
 function fmt(v) { if (v == null) return String(v); if (typeof v === "object") return "$ref" in v ? "→ " + v["$ref"] : JSON.stringify(v); return String(v); }
 function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
 
-applyState(0, true);
+applyState(typeof START === "number" ? START : 0, true);
 `;

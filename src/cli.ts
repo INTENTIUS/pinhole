@@ -4,7 +4,7 @@ import { getTheme } from "./theme.ts";
 import { renderSvg, cardSizes } from "./paint/render.ts";
 import { renderHtml } from "./html.ts";
 import { renderMorphHtml, type MorphView } from "./morph.ts";
-import { renderContainment, renderContainmentApp } from "./containment.ts";
+import { renderContainment, renderContainmentApp, type Focus } from "./containment.ts";
 
 const USAGE = `pinhole — agentic infra diagrammer
 
@@ -21,9 +21,11 @@ the full name and attrs come from hover and the click inspector.
 --morph (with --html) writes a multi-view artifact that morphs between detail
 tiers — a composite expands into its members in place, shared nodes keep their
 identity. Needs at least two distinct tiers.
---containment (experimental) drops low-signal plumbing and renders places (VPC,
-subnet) as nested bounding boxes with their resources inside; only dependency
-refs stay as lines.
+--containment (experimental) drops low-signal plumbing and renders the VPC as a
+boundary with its resources inside; only dependency refs stay as lines. Click
+the VPC (in --html) to switch between app and network views.
+--focus app|network|security shapes what's salient (default app): network is
+light context, or the structured subject, or security policy is first-class.
 
 --html writes a self-contained, offline interactive artifact: the SVG inlined,
 plus a live theme switcher and hover/click inspection of node attrs. The plain
@@ -64,6 +66,7 @@ async function runRender(args: string[]): Promise<number> {
   let style: "card" | "icon" = "card";
   let morph = false;
   let containment = false;
+  let focus: Focus = "app";
   let pulse: string[] | undefined;
   let flow = false;
   const opts: GraphOptions = {};
@@ -78,6 +81,7 @@ async function runRender(args: string[]): Promise<number> {
     else if (a === "--icon" || a === "--icons") style = "icon";
     else if (a === "--morph") morph = true;
     else if (a === "--containment" || a === "--boxes") containment = true;
+    else if (a === "--focus") focus = (args[++i] as Focus) ?? "app";
     else if (a === "--highlight") pulse = (args[++i] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
     else if (a === "--flow") flow = true;
     else if (a === "--detail") opts.detail = Number(args[++i]);
@@ -116,14 +120,14 @@ async function runRender(args: string[]): Promise<number> {
     // layout). --html gets the interactive expand artifact; -o gets a static SVG.
     if (containment) {
       if (html) {
-        await writeFile(html, renderContainmentApp(ir, { title, theme }));
+        await writeFile(html, renderContainmentApp(ir, { title, theme, focus }));
         process.stderr.write(`pinhole: wrote ${html}\n`);
       }
       if (out) {
-        await writeFile(out, renderContainment(ir, { title, theme }));
+        await writeFile(out, renderContainment(ir, { title, theme, focus }));
         process.stderr.write(`pinhole: wrote ${out}\n`);
       }
-      if (!out && !html) process.stdout.write(renderContainment(ir, { title, theme }));
+      if (!out && !html) process.stdout.write(renderContainment(ir, { title, theme, focus }));
       return 0;
     }
 
