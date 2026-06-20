@@ -1,10 +1,10 @@
-import { writeFile } from "node:fs/promises";
+import { writeFile, readFile } from "node:fs/promises";
 import { graphIr, graphLayout, lint, type GraphOptions } from "./chant.ts";
 import { getTheme } from "./theme.ts";
 import { renderSvg, cardSizes } from "./paint/render.ts";
 import { renderHtml } from "./html.ts";
 import { renderMorphHtml, type MorphView } from "./morph.ts";
-import { renderContainment, renderContainmentApp, type Focus } from "./containment.ts";
+import { renderContainment, renderContainmentApp, type Focus, type Hints } from "./containment.ts";
 import { summarizeIr, describeText } from "./inspect.ts";
 import { GUIDE } from "./guide.ts";
 
@@ -34,6 +34,9 @@ boundary with its resources inside; only dependency refs stay as lines. Click
 the VPC (in --html) to switch between app and network views.
 --focus app|network|security shapes what's salient (default app): network is
 light context, or the structured subject, or security policy is first-class.
+--hints <file.json> (with --containment) overrides salience: { "roles": { id:
+"thing"|"plumbing"|"place"|"policy" }, "edges": [ { "from": id, "to": id } ] } —
+force-keep/drop a node, or assert a relationship the IR can't express.
 
 --html writes a self-contained, offline interactive artifact: the SVG inlined,
 plus a live theme switcher and hover/click inspection of node attrs. The plain
@@ -144,6 +147,7 @@ async function runRender(args: string[]): Promise<number> {
   let morph = false;
   let containment = false;
   let focus: Focus = "app";
+  let hintsPath: string | undefined;
   let pulse: string[] | undefined;
   let flow = false;
   let json = false;
@@ -160,6 +164,7 @@ async function runRender(args: string[]): Promise<number> {
     else if (a === "--morph") morph = true;
     else if (a === "--containment" || a === "--boxes") containment = true;
     else if (a === "--focus") focus = (args[++i] as Focus) ?? "app";
+    else if (a === "--hints") hintsPath = args[++i];
     else if (a === "--highlight") pulse = (args[++i] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
     else if (a === "--flow") flow = true;
     else if (a === "--json") json = true;
@@ -205,15 +210,17 @@ async function runRender(args: string[]): Promise<number> {
     // Containment does its own salience filter + nested-box layout (no chant
     // layout). --html gets the interactive expand artifact; -o gets a static SVG.
     if (containment) {
+      const hints = hintsPath ? (JSON.parse(await readFile(hintsPath, "utf8")) as Hints) : undefined;
+      const copts = { title, theme, focus, hints };
       if (html) {
-        await writeFile(html, renderContainmentApp(ir, { title, theme, focus }));
+        await writeFile(html, renderContainmentApp(ir, copts));
         note(html);
       }
       if (out) {
-        await writeFile(out, renderContainment(ir, { title, theme, focus }));
+        await writeFile(out, renderContainment(ir, copts));
         note(out);
       }
-      if (!out && !html && !json) process.stdout.write(renderContainment(ir, { title, theme, focus }));
+      if (!out && !html && !json) process.stdout.write(renderContainment(ir, copts));
       return done();
     }
 

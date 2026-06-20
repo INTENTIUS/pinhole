@@ -21,42 +21,23 @@ import type { GraphIR } from "./ir.ts";
 import { getTheme, v, defs, THEMES, type Theme } from "./theme.ts";
 import { resolveGlyph } from "./icons.ts";
 import { clip, esc } from "./paint/svg.ts";
+import { defaultPack, type Role, type Focus, type SaliencePack, type Hints } from "./pack.ts";
 
-export type Role = "place" | "policy" | "thing" | "plumbing";
+// The salience taxonomy now lives in a swappable presentation pack (#28); these
+// types are re-exported so existing importers keep working.
+export type { Role, Focus, SaliencePack, Hints };
 
-/** What the diagram is *about* — drives what's salient. `app` (default): the
- * network is light context, the workload is the subject. `network`: VPC/subnets
- * are the structured subject. `security`: security groups are first-class. */
-export type Focus = "app" | "network" | "security";
-
-const ROLE_RULES: Array<[RegExp, Role]> = [
-  // plumbing first — these would otherwise look like things/places. Collapsed
-  // into the nearest place, recoverable on drill-down (expand). Covers network
-  // detail (subnets/AZ duplication, routes, gateways), security policy (security
-  // groups, ingress/egress, NACLs), and supporting resources (IAM roles, logs).
-  [/subnet|routetable|\broute\b|routeassociation|gatewayattachment|internetgateway|natgateway|\beip\b|elasticip|securitygroup|firewall|\bwaf|networkacl|ingress|egress|\bacl\b|::role|loggroup/, "plumbing"],
-  [/\bvpc|\bvnet/, "place"],
-];
-
-/** Classify a resource kind into a diagram role, given the diagram's focus.
- * Under `network` focus subnets/route tables become places (structured boxes);
- * under `security` focus security groups are first-class policies. Otherwise they
- * are plumbing — collapsed into the nearest place, recoverable on drill-down. */
-export function roleForKind(kind: string, focus: Focus = "app"): Role {
+/** Classify a resource kind into a diagram role, given the diagram's focus and
+ * the presentation pack. Under `network` focus subnets/route tables become places
+ * (structured boxes); under `security` focus security groups are first-class
+ * policies. Otherwise the pack's role rules apply, defaulting to `thing`. */
+export function roleForKind(kind: string, focus: Focus = "app", pack: SaliencePack = defaultPack): Role {
   const k = kind.toLowerCase();
-  if (focus === "network" && ((/subnet/.test(k) && !/association|group/.test(k)) || (/routetable/.test(k) && !/association/.test(k)))) {
-    return "place";
-  }
-  if (focus === "security" && /securitygroup|firewall|\bwaf|networkacl/.test(k)) return "policy";
-  for (const [re, role] of ROLE_RULES) if (re.test(k)) return role;
+  if (focus === "network" && pack.networkPlace.test(k)) return "place";
+  if (focus === "security" && pack.securityPolicy.test(k)) return "policy";
+  for (const [re, role] of pack.roleRules) if (re.test(k)) return role;
   return "thing";
 }
-
-/** Consumer-side attrs that mean "lives in" (containment), not "uses" (dependency). */
-const LIVES_IN = new Set(["VpcId", "SubnetId"]);
-/** Attrs where a resource *spans* several places (a load balancer across subnets);
- * it lives in their common ancestor (the VPC), not in any one of them. */
-const SPANS = new Set(["Subnets", "SubnetIds"]);
 
 const MARGIN = 60;
 const TITLE_BAND = 84;
@@ -73,6 +54,10 @@ export interface ContainmentOptions {
   theme?: Theme;
   /** What the diagram is about (default "app"). */
   focus?: Focus;
+  /** Salience taxonomy (default: the built-in `defaultPack`). */
+  pack?: SaliencePack;
+  /** Manual overrides: assert roles/edges the IR can't express. */
+  hints?: Hints;
 }
 
 interface Layout {
@@ -100,13 +85,6 @@ interface Analysis {
   hidden: Record<string, string[]>;
 }
 
-const INGRESS_RE = /loadbalanc|\balb\b|gateway|apigateway|cloudfront|distribution/;
-const WORKLOAD_RE = /\bservice\b|\binstance\b|lambda|function|\btask\b|deployment|statefulset|\bpod\b/;
-// Valuable nouns the diagram is usually *about* — protected from incidental
-// collapse regardless of degree (a standalone bucket still shows). This is the
-// built-in tie-break; #28 will let a presentation pack extend it per lexicon.
-const VALUABLE_RE = /\bbucket\b|database|\bdb\b|\btable\b|\bqueue\b|topic|\bcache\b|filesystem|\befs\b|secret|repository|registry|\bstream\b|warehouse|datalake|\bvolume\b/;
-
 /** Salience + containment of an IR.
  *
  * **Network containment is primary** — a lives-in/spans ref (VpcId/SubnetId/
@@ -116,21 +94,36 @@ const VALUABLE_RE = /\bbucket\b|database|\bdb\b|\btable\b|\bqueue\b|topic|\bcach
  * network home (an ECS cluster/service/task definition) gather into a sub-box
  * nested inside the network their networked siblings anchor to. Only refs that
  * are neither lives-in nor spans stay as dependency lines, and plumbing is hidden
- * under the place it lives in. */
-function analyze(ir: GraphIR, focus: Focus = "app"): Analysis {
+ * under the place it lives in.
+ *
+ * Taxonomy comes from `pack` (#28); `hints` lets a caller override roles and
+ * assert relationships the IR can't express. */
+function analyze(ir: GraphIR, focus: Focus = "app", pack: SaliencePack = defaultPack, hints: Hints = {}): Analysis {
+  const LIVES_IN = new Set(pack.livesIn);
+  const SPANS = new Set(pack.spans);
   const role: Record<string, Role> = {};
   const kept = new Set<string>();
   const meta: Record<string, { kind: string; lexicon: string }> = {};
   const composite: Record<string, string> = {};
   const compositeType: Record<string, string> = {};
+  const overridden = new Set<string>();
   for (const n of ir.nodes) {
-    role[n.id] = roleForKind(n.kind, focus);
+    role[n.id] = roleForKind(n.kind, focus, pack);
     meta[n.id] = { kind: n.kind, lexicon: n.lexicon };
     if (role[n.id] !== "plumbing") kept.add(n.id);
     if (n.compositeInstance) {
       composite[n.id] = n.compositeInstance;
       compositeType[n.compositeInstance] = n.compositeParent ?? "composite";
     }
+  }
+
+  // Manual role overrides (#28): authoritative, and protected from collapse.
+  for (const [id, r] of Object.entries(hints.roles ?? {})) {
+    if (!(id in role)) continue;
+    role[id] = r;
+    if (r === "plumbing") kept.delete(id);
+    else kept.add(id);
+    overridden.add(id);
   }
 
   // Topology pass (v2): infer *incidental* resources from the relationship shape,
@@ -152,7 +145,7 @@ function analyze(ir: GraphIR, focus: Focus = "app"): Analysis {
   }
   const kindOf = (id: string): string => meta[id].kind.toLowerCase();
   const protectedSubject = (id: string): boolean =>
-    INGRESS_RE.test(kindOf(id)) || WORKLOAD_RE.test(kindOf(id)) || VALUABLE_RE.test(kindOf(id));
+    overridden.has(id) || pack.ingress.test(kindOf(id)) || pack.workload.test(kindOf(id)) || pack.valuable.test(kindOf(id));
   for (let changed = true; changed; ) {
     changed = false;
     const di: Record<string, number> = {};
@@ -253,10 +246,18 @@ function analyze(ir: GraphIR, focus: Focus = "app"): Analysis {
   const byComposite: Record<string, string[]> = {};
   for (const id of kept) if (composite[id]) (byComposite[composite[id]] = byComposite[composite[id]] || []).push(id);
   for (const members of Object.values(byComposite)) {
-    const ingress = members.filter((id) => INGRESS_RE.test(meta[id].kind.toLowerCase()));
-    const workload = members.filter((id) => WORKLOAD_RE.test(meta[id].kind.toLowerCase()));
+    const ingress = members.filter((id) => pack.ingress.test(meta[id].kind.toLowerCase()));
+    const workload = members.filter((id) => pack.workload.test(meta[id].kind.toLowerCase()));
     for (const i of ingress) for (const w of workload) {
       if (i !== w && !existing.has(`${i}>${w}`)) { implied.push({ from: i, to: w }); existing.add(`${i}>${w}`); }
+    }
+  }
+  // Manually asserted relationships (#28): the IR can't express some links (an
+  // ALB→service), so let a caller declare them — drawn as the implied hint.
+  for (const e of hints.edges ?? []) {
+    if (kept.has(e.from) && kept.has(e.to) && e.from !== e.to && !existing.has(`${e.from}>${e.to}`)) {
+      implied.push({ from: e.from, to: e.to });
+      existing.add(`${e.from}>${e.to}`);
     }
   }
 
@@ -367,7 +368,7 @@ function computeLayout(
 export function renderContainment(ir: GraphIR, opts: ContainmentOptions = {}): string {
   const theme = opts.theme ?? getTheme();
   const focus = opts.focus ?? "app";
-  const { role, kept, meta, parent, children, depEdges, implied } = analyze(ir, focus);
+  const { role, kept, meta, parent, children, depEdges, implied } = analyze(ir, focus, opts.pack, opts.hints);
   const roots = [...kept].filter((id) => !parent[id]).sort();
   const { L, canvasW, canvasH } = computeLayout(roots, children, role);
 
@@ -642,8 +643,8 @@ export function renderContainmentApp(ir: GraphIR, opts: ContainmentOptions = {})
   // toggles between them. Leaf nodes are drawn once and glide between states.
   const focus = opts.focus ?? "app";
   const variants = focus === "security"
-    ? [analyze(ir, "security"), analyze(ir, "network")]
-    : [analyze(ir, "app"), analyze(ir, "network")];
+    ? [analyze(ir, "security", opts.pack, opts.hints), analyze(ir, "network", opts.pack, opts.hints)]
+    : [analyze(ir, "app", opts.pack, opts.hints), analyze(ir, "network", opts.pack, opts.hints)];
   const subtitleOf = (id: string): string | undefined => subtitleFor(id, ir);
   const center = (L: Layout, id: string) => ({ x: Math.round(L.X[id] + L.W[id] / 2), y: Math.round(L.Y[id] + L.H[id] / 2) });
 
