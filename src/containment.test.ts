@@ -154,6 +154,12 @@ describe("composite-primary grouping", () => {
     expect(within(rect("appSvc"), rect("app"))).toBe(true); // ECS service in the app box
     expect(within(rect("app"), rect("netVpc"))).toBe(true); // …which sits inside the VPC
   });
+
+  it("hints an implied ingress→workload edge the composite implies but the IR lacks", () => {
+    // appAlb (ingress) and appSvc (workload) share the FargateAlb composite but
+    // have no direct reference — draw it as an implied (dotted) edge.
+    expect(csvg).toContain('data-edge-from="appAlb" data-edge-to="appSvc" data-edge-implied="1"');
+  });
 });
 
 describe("renderContainmentApp (interactive expand)", () => {
