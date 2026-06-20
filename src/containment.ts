@@ -62,6 +62,36 @@ interface Layout {
   grid: Record<string, { cols: number; cellW: number; cellH: number }>;
 }
 
+const uniq = (xs: string[]): string[] => [...new Set(xs)];
+
+/** Per-node inspector notes for the containment view: what a place *contains*
+ * (its kept children) and what plumbing it *hides* (dropped resources that live
+ * in it). So clicking a box drills into the detail the salience filter removed. */
+export function containmentNotes(ir: GraphIR): Record<string, Array<{ label: string; value: string }>> {
+  const role: Record<string, Role> = {};
+  const kept = new Set<string>();
+  for (const n of ir.nodes) {
+    role[n.id] = roleForKind(n.kind);
+    if (role[n.id] !== "plumbing") kept.add(n.id);
+  }
+  const children: Record<string, string[]> = {};
+  const hidden: Record<string, string[]> = {};
+  for (const e of ir.edges) {
+    if (e.from === e.to || !e.viaAttr || !LIVES_IN.has(e.viaAttr)) continue;
+    if (!kept.has(e.to)) continue;
+    if (kept.has(e.from)) (children[e.to] = children[e.to] || []).push(e.from);
+    else (hidden[e.to] = hidden[e.to] || []).push(e.from); // plumbing living in a kept place
+  }
+  const notes: Record<string, Array<{ label: string; value: string }>> = {};
+  for (const id of kept) {
+    const rows: Array<{ label: string; value: string }> = [];
+    if (children[id]?.length) rows.push({ label: "contains", value: uniq(children[id]).join(", ") });
+    if (hidden[id]?.length) rows.push({ label: "hides", value: uniq(hidden[id]).join(", ") });
+    if (rows.length) notes[id] = rows;
+  }
+  return notes;
+}
+
 /** Render a graph IR as a salience-filtered containment diagram (SVG string). */
 export function renderContainment(ir: GraphIR, opts: ContainmentOptions = {}): string {
   const theme = opts.theme ?? getTheme();
@@ -79,14 +109,14 @@ export function renderContainment(ir: GraphIR, opts: ContainmentOptions = {}): s
   // 2. Containment: a lives-in edge (kept→kept) gives a parent.
   const parent: Record<string, string> = {};
   const children: Record<string, string[]> = {};
-  const depEdges: Array<{ from: string; to: string }> = [];
+  const depEdges: Array<{ from: string; to: string; via?: string; toAttr?: string }> = [];
   for (const e of ir.edges) {
     if (!kept.has(e.from) || !kept.has(e.to) || e.from === e.to) continue;
     if (e.viaAttr && LIVES_IN.has(e.viaAttr) && !parent[e.from]) {
       parent[e.from] = e.to;
       (children[e.to] = children[e.to] || []).push(e.from);
     } else {
-      depEdges.push({ from: e.from, to: e.to });
+      depEdges.push({ from: e.from, to: e.to, via: e.viaAttr, toAttr: e.toAttr });
     }
   }
   const roots = [...kept].filter((id) => !parent[id]).sort();
@@ -148,11 +178,21 @@ export function renderContainment(ir: GraphIR, opts: ContainmentOptions = {}): s
   };
   roots.forEach(walk);
 
+  // Dependency lines as interactive edge groups — same hooks the HTML artifact
+  // uses, so hover shows the reference + ref value and click pins the relationship.
   let lines = "";
   for (const e of depEdges) {
     const a = center(e.from);
     const b = center(e.to);
-    lines += `<path d="M ${a.x} ${a.y} C ${a.x} ${(a.y + b.y) / 2}, ${b.x} ${(a.y + b.y) / 2}, ${b.x} ${b.y}" fill="none" stroke="${v(theme, "edge")}" stroke-width="1.4" stroke-linecap="round" stroke-dasharray="5 5"/>`;
+    const d = `M ${a.x} ${a.y} C ${a.x} ${(a.y + b.y) / 2}, ${b.x} ${(a.y + b.y) / 2}, ${b.x} ${b.y}`;
+    const attrs =
+      ` data-edge-from="${esc(e.from)}" data-edge-to="${esc(e.to)}"` +
+      (e.via ? ` data-edge-via="${esc(e.via)}"` : "") +
+      (e.toAttr ? ` data-edge-to-attr="${esc(e.toAttr)}"` : "");
+    lines +=
+      `<g${attrs}>` +
+      `<path class="pin-edge-line" d="${esc(d)}" fill="none" stroke="${v(theme, "edge")}" stroke-width="1.4" stroke-linecap="round" stroke-dasharray="5 5"/>` +
+      `<path d="${esc(d)}" fill="none" stroke="transparent" stroke-width="14" stroke-linecap="round" pointer-events="stroke"/></g>`;
   }
 
   return (

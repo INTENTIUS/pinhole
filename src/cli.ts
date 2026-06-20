@@ -4,7 +4,7 @@ import { getTheme } from "./theme.ts";
 import { renderSvg, cardSizes } from "./paint/render.ts";
 import { renderHtml } from "./html.ts";
 import { renderMorphHtml, type MorphView } from "./morph.ts";
-import { renderContainment } from "./containment.ts";
+import { renderContainment, containmentNotes } from "./containment.ts";
 
 const USAGE = `pinhole — agentic infra diagrammer
 
@@ -125,7 +125,8 @@ async function runRender(args: string[]): Promise<number> {
           animate: { pulse, flow },
         });
     if (html) {
-      await writeFile(html, renderHtml(ir, svg, { title, theme }));
+      const notes = containment ? containmentNotes(ir) : undefined;
+      await writeFile(html, renderHtml(ir, svg, { title, theme, notes }));
       process.stderr.write(`pinhole: wrote ${html}\n`);
     }
     if (out) {

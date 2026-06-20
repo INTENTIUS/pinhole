@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { roleForKind, renderContainment } from "./containment.ts";
+import { roleForKind, renderContainment, containmentNotes } from "./containment.ts";
 import type { GraphIR } from "./ir.ts";
 
 describe("roleForKind", () => {
@@ -60,6 +60,18 @@ describe("renderContainment", () => {
     expect(inside(rectOf("sg")!, rectOf("vpc")!)).toBe(true);
     // web → sg is a dependency (dashed line), not containment
     expect(svg).toContain('stroke-dasharray="5 5"');
+  });
+
+  it("makes the dependency lines interactive (rollover/click hooks)", () => {
+    expect(svg).toContain('data-edge-from="web"');
+    expect(svg).toContain('data-edge-to="sg"');
+    expect(svg).toContain('pointer-events="stroke"'); // wide hit-path
+  });
+
+  it("notes what each place contains and hides (drill-in)", () => {
+    const notes = containmentNotes(ir);
+    expect(notes.vpc).toContainEqual({ label: "contains", value: expect.stringContaining("subnet") });
+    expect(notes.vpc).toContainEqual({ label: "hides", value: "routeTable" });
   });
 
   it("floats a node with no lives-in parent at the top level", () => {
