@@ -78,7 +78,8 @@ interface Layout {
   H: Record<string, number>;
   X: Record<string, number>;
   Y: Record<string, number>;
-  grid: Record<string, { cols: number; cellW: number; cellH: number }>;
+  /** Row-packing per box: each row's y offset and its children's x offsets. */
+  pack: Record<string, Array<{ y: number; items: Array<{ id: string; x: number }> }>>;
 }
 
 const uniq = (xs: string[]): string[] => [...new Set(xs)];
@@ -117,6 +118,35 @@ function analyze(ir: GraphIR, focus: Focus = "app"): Analysis {
     if (n.compositeInstance) {
       composite[n.id] = n.compositeInstance;
       compositeType[n.compositeInstance] = n.compositeParent ?? "composite";
+    }
+  }
+
+  // Topology pass: infer *incidental* resources from the relationship shape,
+  // rather than hardcoding kinds. Counting only dependency refs (not containment),
+  // two unambiguous shapes are incidental:
+  //  - a single-attachment component: nothing points at it and it points at
+  //    exactly one thing (a listener → its ALB);
+  //  - a relationship-isolated node parked in a place: no dependency refs either
+  //    way, only a containment ref (a target group whose only edge is its VPC).
+  // These collapse to drill-down. Hubs, multi-dependency subjects (the service),
+  // and standalone or referenced resources (a bucket) survive — degree alone
+  // can't tell a valuable leaf from config, so we don't guess on those.
+  const depIn: Record<string, number> = {};
+  const depOut: Record<string, number> = {};
+  const placed = new Set<string>();
+  for (const e of ir.edges) {
+    if (e.from === e.to) continue;
+    if (e.viaAttr && (LIVES_IN.has(e.viaAttr) || SPANS.has(e.viaAttr))) { placed.add(e.from); continue; }
+    depOut[e.from] = (depOut[e.from] ?? 0) + 1;
+    depIn[e.to] = (depIn[e.to] ?? 0) + 1;
+  }
+  for (const n of ir.nodes) {
+    if (role[n.id] !== "thing") continue; // never demote places/policies here
+    const di = depIn[n.id] ?? 0;
+    const dy = depOut[n.id] ?? 0;
+    if ((di === 0 && dy === 1) || (di === 0 && dy === 0 && placed.has(n.id))) {
+      role[n.id] = "plumbing";
+      kept.delete(n.id);
     }
   }
 
@@ -225,7 +255,9 @@ function computeLayout(
   children: Record<string, string[]>,
   role: Record<string, Role>,
 ): { L: Layout; canvasW: number; canvasH: number } {
-  const L: Layout = { W: {}, H: {}, X: {}, Y: {}, grid: {} };
+  const L: Layout = { W: {}, H: {}, X: {}, Y: {}, pack: {} };
+  // Size bottom-up with greedy row packing (variable cell widths) so a box hugs
+  // its contents instead of an n×n grid of the widest child.
   const size = (id: string): void => {
     const ch = children[id] ?? [];
     if (ch.length === 0) {
@@ -234,27 +266,37 @@ function computeLayout(
       return;
     }
     ch.forEach(size);
-    const cols = Math.ceil(Math.sqrt(ch.length));
-    const cellW = Math.max(...ch.map((c) => L.W[c]));
-    const cellH = Math.max(...ch.map((c) => L.H[c]));
-    const rows = Math.ceil(ch.length / cols);
-    L.W[id] = cols * cellW + (cols - 1) * GAP + 2 * PAD;
-    L.H[id] = BOX_TITLE + rows * cellH + (rows - 1) * GAP + 2 * PAD;
-    L.grid[id] = { cols, cellW, cellH };
+    const widest = Math.max(...ch.map((c) => L.W[c]));
+    const avg = ch.reduce((s, c) => s + L.W[c], 0) / ch.length;
+    const target = Math.max(widest, Math.ceil(Math.sqrt(ch.length)) * (avg + GAP));
+    const pack: Array<{ y: number; items: Array<{ id: string; x: number }> }> = [];
+    let row: Array<{ id: string; x: number }> = [];
+    let rowW = PAD;
+    let y = BOX_TITLE + PAD;
+    let maxRowW = 0;
+    const flush = (): void => {
+      if (!row.length) return;
+      const rh = Math.max(...row.map((it) => L.H[it.id]));
+      pack.push({ y, items: row });
+      maxRowW = Math.max(maxRowW, rowW - GAP + PAD);
+      y += rh + GAP;
+      row = [];
+      rowW = PAD;
+    };
+    for (const c of ch) {
+      if (row.length && rowW + L.W[c] > target + PAD) flush();
+      row.push({ id: c, x: rowW });
+      rowW += L.W[c] + GAP;
+    }
+    flush();
+    L.W[id] = Math.max(maxRowW, BOX_TITLE);
+    L.H[id] = y - GAP + PAD;
+    L.pack[id] = pack;
   };
   const place = (id: string, x: number, y: number): void => {
     L.X[id] = x;
     L.Y[id] = y;
-    const ch = children[id] ?? [];
-    if (ch.length === 0) return;
-    const { cols, cellW, cellH } = L.grid[id];
-    const cx0 = x + PAD;
-    const cy0 = y + BOX_TITLE + PAD;
-    ch.forEach((c, i) => {
-      const col = i % cols;
-      const row = Math.floor(i / cols);
-      place(c, cx0 + col * (cellW + GAP) + (cellW - L.W[c]) / 2, cy0 + row * (cellH + GAP) + (cellH - L.H[c]) / 2);
-    });
+    for (const r of L.pack[id] ?? []) for (const it of r.items) place(it.id, x + it.x, y + r.y);
   };
   roots.forEach(size);
   let rx = MARGIN;

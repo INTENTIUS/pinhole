@@ -78,6 +78,44 @@ describe("renderContainment", () => {
   });
 });
 
+describe("topology — incidental detection from relationship shape", () => {
+  // ALB (hub: a listener points at it, it points at a SG) + the listener
+  // (single-attachment component) + a target group (parked: only a VPC ref) +
+  // a service (subject: points at two deps).
+  const tir: GraphIR = {
+    nodes: [
+      { id: "vpc", kind: "AWS::EC2::VPC", lexicon: "aws", attrs: {} },
+      { id: "alb", kind: "AWS::ELBv2::LoadBalancer", lexicon: "aws", attrs: {} },
+      { id: "sg", kind: "AWS::EC2::SecurityGroup", lexicon: "aws", attrs: {} },
+      { id: "listener", kind: "AWS::ELBv2::Listener", lexicon: "aws", attrs: {} },
+      { id: "targetGroup", kind: "AWS::ELBv2::TargetGroup", lexicon: "aws", attrs: {} },
+      { id: "svc", kind: "AWS::ECS::Service", lexicon: "aws", attrs: {} },
+      { id: "cluster", kind: "AWS::ECS::Cluster", lexicon: "aws", attrs: {} },
+      { id: "taskDef", kind: "AWS::ECS::TaskDefinition", lexicon: "aws", attrs: {} },
+    ],
+    edges: [
+      { from: "alb", to: "vpc", kind: "ref", viaAttr: "Subnets" }, // alb in vpc
+      { from: "alb", to: "sg", kind: "ref", viaAttr: "SecurityGroups" }, // alb → sg
+      { from: "listener", to: "alb", kind: "ref", viaAttr: "LoadBalancerArn" }, // single-attachment → incidental
+      { from: "targetGroup", to: "vpc", kind: "ref", viaAttr: "VpcId" }, // parked, no deps → incidental
+      { from: "svc", to: "cluster", kind: "ref", viaAttr: "Cluster" }, // subject with two deps
+      { from: "svc", to: "taskDef", kind: "ref", viaAttr: "TaskDefinition" },
+    ],
+    groups: {},
+  };
+  const t = renderContainment(tir, {});
+
+  it("collapses incidental components and parked nodes (listener, target group)", () => {
+    expect(t).not.toContain('data-node-id="listener"');
+    expect(t).not.toContain('data-node-id="targetGroup"');
+  });
+
+  it("keeps hubs and multi-dependency subjects (alb, service)", () => {
+    expect(t).toContain('data-node-id="alb"');
+    expect(t).toContain('data-node-id="svc"');
+  });
+});
+
 describe("composite-primary grouping", () => {
   // a net composite (VPC+subnet) and an app composite (ALB+service); the ALB
   // points at the network's subnet across composites.
@@ -86,11 +124,15 @@ describe("composite-primary grouping", () => {
       { id: "netVpc", kind: "AWS::EC2::VPC", lexicon: "aws", attrs: {}, compositeInstance: "net", compositeParent: "VpcDefault" },
       { id: "netSubnet", kind: "AWS::EC2::Subnet", lexicon: "aws", attrs: {}, compositeInstance: "net", compositeParent: "VpcDefault" },
       { id: "appAlb", kind: "AWS::ELBv2::LoadBalancer", lexicon: "aws", attrs: {}, compositeInstance: "app", compositeParent: "FargateAlb" },
+      { id: "appSg", kind: "AWS::EC2::SecurityGroup", lexicon: "aws", attrs: {}, compositeInstance: "app", compositeParent: "FargateAlb" },
+      { id: "appListener", kind: "AWS::ELBv2::Listener", lexicon: "aws", attrs: {}, compositeInstance: "app", compositeParent: "FargateAlb" },
       { id: "appSvc", kind: "AWS::ECS::Service", lexicon: "aws", attrs: {}, compositeInstance: "app", compositeParent: "FargateAlb" },
     ],
     edges: [
       { from: "netSubnet", to: "netVpc", kind: "ref", viaAttr: "VpcId" }, // subnet collapses into vpc
       { from: "appAlb", to: "netSubnet", kind: "ref", viaAttr: "Subnets" }, // app's ALB spans → lives in the vpc
+      { from: "appAlb", to: "appSg", kind: "ref", viaAttr: "SecurityGroups" }, // ALB → its SG (a real dependency)
+      { from: "appListener", to: "appAlb", kind: "ref", viaAttr: "LoadBalancerArn" }, // listener → ALB (incidental, collapses)
     ],
     groups: {},
   };
