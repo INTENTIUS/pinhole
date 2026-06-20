@@ -24,6 +24,9 @@ export interface HtmlOptions {
   title?: string;
   /** Theme baked into the SVG; the switcher starts on this one. */
   theme?: Theme;
+  /** Extra inspector rows per node id, shown above the raw attributes — e.g. a
+   * containment view passing what a box "contains" and what plumbing it hides. */
+  notes?: Record<string, Array<{ label: string; value: string }>>;
 }
 
 /** Embed a value as a JSON literal that's safe inside a `<script>` (a literal
@@ -83,6 +86,7 @@ ${PAGE_CSS}
 <script>
 const THEMES = ${jsonScript(themeTable())};
 const NODES = ${jsonScript(nodeTable(ir))};
+const NOTES = ${jsonScript(opts.notes ?? {})};
 ${VIEWER_JS}
 </script>
 </body>
@@ -352,6 +356,12 @@ function renderNodeInspector(node) {
     meta.push(["source", node.sourceLoc.file + (node.sourceLoc.line ? ":" + node.sourceLoc.line : "")]);
   }
   if (meta.length) html += "<dl>" + meta.map(rowPlain).join("") + "</dl>";
+
+  // view-supplied notes (e.g. containment: what this box holds / hides)
+  const notes = NOTES[node.id];
+  if (notes && notes.length) {
+    html += "<dl>" + notes.map((n) => rowPlain([n.label, n.value])).join("") + "</dl>";
+  }
 
   const attrs = node.attrs || {};
   const keys = Object.keys(attrs);

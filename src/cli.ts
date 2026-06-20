@@ -3,6 +3,8 @@ import { graphIr, graphLayout, type GraphOptions } from "./chant.ts";
 import { getTheme } from "./theme.ts";
 import { renderSvg, cardSizes } from "./paint/render.ts";
 import { renderHtml } from "./html.ts";
+import { renderMorphHtml, type MorphView } from "./morph.ts";
+import { renderContainment, renderContainmentApp } from "./containment.ts";
 
 const USAGE = `pinhole — agentic infra diagrammer
 
@@ -16,6 +18,12 @@ Themes: dark (default), light, blueprint, aws.
 native-SVG text that works as a static image and on GitHub.
 --icon draws each node as a compact glyph + a truncated label (dense graphs);
 the full name and attrs come from hover and the click inspector.
+--morph (with --html) writes a multi-view artifact that morphs between detail
+tiers — a composite expands into its members in place, shared nodes keep their
+identity. Needs at least two distinct tiers.
+--containment (experimental) drops low-signal plumbing and renders places (VPC,
+subnet) as nested bounding boxes with their resources inside; only dependency
+refs stay as lines.
 
 --html writes a self-contained, offline interactive artifact: the SVG inlined,
 plus a live theme switcher and hover/click inspection of node attrs. The plain
@@ -54,6 +62,8 @@ async function runRender(args: string[]): Promise<number> {
   let themeName: string | undefined;
   let tier: "portable" | "rich" = "portable";
   let style: "card" | "icon" = "card";
+  let morph = false;
+  let containment = false;
   let pulse: string[] | undefined;
   let flow = false;
   const opts: GraphOptions = {};
@@ -66,6 +76,8 @@ async function runRender(args: string[]): Promise<number> {
     else if (a === "--theme") themeName = args[++i];
     else if (a === "--rich") tier = "rich";
     else if (a === "--icon" || a === "--icons") style = "icon";
+    else if (a === "--morph") morph = true;
+    else if (a === "--containment" || a === "--boxes") containment = true;
     else if (a === "--highlight") pulse = (args[++i] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
     else if (a === "--flow") flow = true;
     else if (a === "--detail") opts.detail = Number(args[++i]);
@@ -82,11 +94,47 @@ async function runRender(args: string[]): Promise<number> {
 
   try {
     const theme = getTheme(themeName);
-    // IR first so we can measure each node's card; then lay out with those sizes
-    // (same options, so the IR and layout node sets line up) and paint.
+
+    if (morph) {
+      if (!html) {
+        process.stderr.write(`pinhole: --morph writes an interactive artifact; pass --html <file>\n`);
+        return 2;
+      }
+      const views = await buildMorphViews(dir, opts, title);
+      if (views.length < 2) {
+        process.stderr.write(`pinhole: --morph needs at least two distinct views (detail tiers); this graph collapses to one\n`);
+        return 1;
+      }
+      await writeFile(html, renderMorphHtml(views, { title, theme }));
+      process.stderr.write(`pinhole: wrote ${html} (${views.length} views)\n`);
+      return 0;
+    }
+
     const ir = await graphIr(dir, opts);
-    const layout = await graphLayout(dir, opts, cardSizes(ir, { style }));
-    const svg = renderSvg(ir, layout, { title, theme, tier, style, animate: { pulse, flow } });
+
+    // Containment does its own salience filter + nested-box layout (no chant
+    // layout). --html gets the interactive expand artifact; -o gets a static SVG.
+    if (containment) {
+      if (html) {
+        await writeFile(html, renderContainmentApp(ir, { title, theme }));
+        process.stderr.write(`pinhole: wrote ${html}\n`);
+      }
+      if (out) {
+        await writeFile(out, renderContainment(ir, { title, theme }));
+        process.stderr.write(`pinhole: wrote ${out}\n`);
+      }
+      if (!out && !html) process.stdout.write(renderContainment(ir, { title, theme }));
+      return 0;
+    }
+
+    // Otherwise measure each node's card, lay out with those sizes, and paint.
+    const svg = renderSvg(ir, await graphLayout(dir, opts, cardSizes(ir, { style })), {
+      title,
+      theme,
+      tier,
+      style,
+      animate: { pulse, flow },
+    });
     if (html) {
       await writeFile(html, renderHtml(ir, svg, { title, theme }));
       process.stderr.write(`pinhole: wrote ${html}\n`);
@@ -103,6 +151,29 @@ async function runRender(args: string[]): Promise<number> {
     process.stderr.write(`pinhole: ${err instanceof Error ? err.message : String(err)}\n`);
     return 1;
   }
+}
+
+/** Render the graph at each detail tier (0..3), keeping only views with a
+ * distinct node set, so the morph has meaningful frames to flip between. Nodes
+ * are sized in icon style (the morph paints glyph badges). */
+async function buildMorphViews(dir: string, opts: GraphOptions, _title?: string): Promise<MorphView[]> {
+  const views: MorphView[] = [];
+  const seen = new Set<string>();
+  for (const detail of [0, 1, 2, 3]) {
+    const tierOpts = { ...opts, detail };
+    let ir;
+    try {
+      ir = await graphIr(dir, tierOpts);
+    } catch {
+      continue; // a tier that doesn't apply (e.g. no stacks) — skip
+    }
+    const signature = ir.nodes.map((n) => n.id).sort().join(",");
+    if (seen.has(signature)) continue;
+    seen.add(signature);
+    const layout = await graphLayout(dir, tierOpts, cardSizes(ir, { style: "icon" }));
+    views.push({ name: `detail ${detail}`, ir, layout });
+  }
+  return views;
 }
 
 // Allow `node dist/cli.js ...` directly as well as via the bin launcher.
