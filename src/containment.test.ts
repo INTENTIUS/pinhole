@@ -116,6 +116,50 @@ describe("topology — incidental detection from relationship shape", () => {
   });
 });
 
+describe("topology v2 — fixpoint folding + valuable-noun tie-break", () => {
+  // A chain of config: rule → listener → alb(ingress). v1 (single pass) would
+  // collapse the rule but leave the listener (its in-degree from the rule still
+  // counted). v2 recomputes after each collapse, so the whole chain folds to the
+  // ingress.
+  const chain: GraphIR = {
+    nodes: [
+      { id: "vpc", kind: "AWS::EC2::VPC", lexicon: "aws", attrs: {} },
+      { id: "alb", kind: "AWS::ELBv2::LoadBalancer", lexicon: "aws", attrs: {} },
+      { id: "listener", kind: "AWS::ELBv2::Listener", lexicon: "aws", attrs: {} },
+      { id: "rule", kind: "AWS::ELBv2::ListenerRule", lexicon: "aws", attrs: {} },
+    ],
+    edges: [
+      { from: "alb", to: "vpc", kind: "ref", viaAttr: "Subnets" },
+      { from: "listener", to: "alb", kind: "ref", viaAttr: "LoadBalancerArn" },
+      { from: "rule", to: "listener", kind: "ref", viaAttr: "ListenerArn" },
+    ],
+    groups: {},
+  };
+  const c = renderContainment(chain, {});
+
+  it("folds a chain of single-attachment config to a fixpoint", () => {
+    expect(c).not.toContain('data-node-id="rule"');
+    expect(c).not.toContain('data-node-id="listener"'); // v1 would have left this
+    expect(c).toContain('data-node-id="alb"');
+  });
+
+  // A parked filesystem (only a containment ref, no deps). v1's parked rule would
+  // collapse it; v2 protects valuable nouns so the resource the diagram is about
+  // still shows.
+  const valuable: GraphIR = {
+    nodes: [
+      { id: "vpc", kind: "AWS::EC2::VPC", lexicon: "aws", attrs: {} },
+      { id: "fs", kind: "AWS::EFS::FileSystem", lexicon: "aws", attrs: {} },
+    ],
+    edges: [{ from: "fs", to: "vpc", kind: "ref", viaAttr: "VpcId" }],
+    groups: {},
+  };
+
+  it("protects a parked valuable noun from incidental collapse", () => {
+    expect(renderContainment(valuable, {})).toContain('data-node-id="fs"');
+  });
+});
+
 describe("composite-primary grouping", () => {
   // a net composite (VPC+subnet) and an app composite (ALB+service); the ALB
   // points at the network's subnet across composites.

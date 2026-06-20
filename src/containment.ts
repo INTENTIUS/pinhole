@@ -100,6 +100,10 @@ interface Analysis {
 
 const INGRESS_RE = /loadbalanc|\balb\b|gateway|apigateway|cloudfront|distribution/;
 const WORKLOAD_RE = /\bservice\b|\binstance\b|lambda|function|\btask\b|deployment|statefulset|\bpod\b/;
+// Valuable nouns the diagram is usually *about* — protected from incidental
+// collapse regardless of degree (a standalone bucket still shows). This is the
+// built-in tie-break; #28 will let a presentation pack extend it per lexicon.
+const VALUABLE_RE = /\bbucket\b|database|\bdb\b|\btable\b|\bqueue\b|topic|\bcache\b|filesystem|\befs\b|secret|repository|registry|\bstream\b|warehouse|datalake|\bvolume\b/;
 
 /** Salience + containment of an IR.
  *
@@ -127,32 +131,48 @@ function analyze(ir: GraphIR, focus: Focus = "app"): Analysis {
     }
   }
 
-  // Topology pass: infer *incidental* resources from the relationship shape,
-  // rather than hardcoding kinds. Counting only dependency refs (not containment),
-  // two unambiguous shapes are incidental:
-  //  - a single-attachment component: nothing points at it and it points at
-  //    exactly one thing (a listener → its ALB);
-  //  - a relationship-isolated node parked in a place: no dependency refs either
-  //    way, only a containment ref (a target group whose only edge is its VPC).
-  // These collapse to drill-down. Hubs, multi-dependency subjects (the service),
-  // and standalone or referenced resources (a bucket) survive — degree alone
-  // can't tell a valuable leaf from config, so we don't guess on those.
-  const depIn: Record<string, number> = {};
-  const depOut: Record<string, number> = {};
+  // Topology pass (v2): infer *incidental* resources from the relationship shape,
+  // rather than hardcoding kinds. We iterate to a fixpoint so chains of config
+  // fold one link at a time. Counting only dependency refs (not containment) and
+  // only among still-kept nodes, a "thing" collapses to drill-down when it is:
+  //  - a single-attachment leaf: nothing depends on it and it touches exactly one
+  //    kept node (a listener → its ALB; after that folds, a rule → that listener);
+  //  - parked: no dependency refs either way, only a containment ref (a target
+  //    group whose only edge is its VPC).
+  // Guarded so the diagram never collapses to nothing: places/policies, ingress
+  // and workload subjects, valuable nouns, and anything *depended upon* (in-degree
+  // > 0, e.g. a referenced bucket) all survive. Degree alone can't tell a valuable
+  // leaf from config — these guards are the tie-break.
   const placed = new Set<string>();
   for (const e of ir.edges) {
     if (e.from === e.to) continue;
-    if (e.viaAttr && (LIVES_IN.has(e.viaAttr) || SPANS.has(e.viaAttr))) { placed.add(e.from); continue; }
-    depOut[e.from] = (depOut[e.from] ?? 0) + 1;
-    depIn[e.to] = (depIn[e.to] ?? 0) + 1;
+    if (e.viaAttr && (LIVES_IN.has(e.viaAttr) || SPANS.has(e.viaAttr))) placed.add(e.from);
   }
-  for (const n of ir.nodes) {
-    if (role[n.id] !== "thing") continue; // never demote places/policies here
-    const di = depIn[n.id] ?? 0;
-    const dy = depOut[n.id] ?? 0;
-    if ((di === 0 && dy === 1) || (di === 0 && dy === 0 && placed.has(n.id))) {
-      role[n.id] = "plumbing";
-      kept.delete(n.id);
+  const kindOf = (id: string): string => meta[id].kind.toLowerCase();
+  const protectedSubject = (id: string): boolean =>
+    INGRESS_RE.test(kindOf(id)) || WORKLOAD_RE.test(kindOf(id)) || VALUABLE_RE.test(kindOf(id));
+  for (let changed = true; changed; ) {
+    changed = false;
+    const di: Record<string, number> = {};
+    const dout: Record<string, number> = {};
+    const nbr: Record<string, Set<string>> = {};
+    for (const e of ir.edges) {
+      if (e.from === e.to) continue;
+      if (e.viaAttr && (LIVES_IN.has(e.viaAttr) || SPANS.has(e.viaAttr))) continue;
+      if (!kept.has(e.from) || !kept.has(e.to)) continue; // only kept↔kept, so collapses ripple
+      dout[e.from] = (dout[e.from] ?? 0) + 1;
+      di[e.to] = (di[e.to] ?? 0) + 1;
+      (nbr[e.from] ??= new Set()).add(e.to);
+      (nbr[e.to] ??= new Set()).add(e.from);
+    }
+    for (const n of ir.nodes) {
+      const id = n.id;
+      if (!kept.has(id) || role[id] !== "thing" || protectedSubject(id)) continue;
+      const inDeg = di[id] ?? 0;
+      const deg = nbr[id] ? nbr[id].size : 0;
+      const singleAttach = inDeg === 0 && deg === 1;
+      const parked = inDeg === 0 && (dout[id] ?? 0) === 0 && placed.has(id);
+      if (singleAttach || parked) { role[id] = "plumbing"; kept.delete(id); changed = true; }
     }
   }
 
