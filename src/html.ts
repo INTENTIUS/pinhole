@@ -194,11 +194,26 @@ function edgeElFrom(target) {
   return target && target.closest ? target.closest("[data-edge-from]") : null;
 }
 
-// --- hover tooltip: nodes, and edges (the relationship + its ref value) ---
+// --- hover: tooltip + triggered motion on the focused set only (#9) ---
+// On node hover, its incident edges animate flow (direction of the references)
+// and the node + its neighbours glow; on edge hover, that edge flows and its
+// endpoints glow. Motion reuses the reduced-motion-guarded pin-flow keyframes,
+// and only the focused set animates (never the whole graph).
 let litNodes = [];
-function clearEdgeHighlight() {
+let flowLines = [];
+function clearFocus() {
   litNodes.forEach((el) => el.classList.remove("pin-edge-node"));
+  flowLines.forEach((el) => el.classList.remove("pin-flow"));
   litNodes = [];
+  flowLines = [];
+}
+function lightNode(id) {
+  const el = nodeElById(id);
+  if (el) { el.classList.add("pin-edge-node"); litNodes.push(el); }
+}
+function flowEdge(g) {
+  const line = g.querySelector(".pin-edge-line");
+  if (line) { line.classList.add("pin-flow"); flowLines.push(line); }
 }
 function placeTip(e) {
   tip.hidden = false;
@@ -217,43 +232,52 @@ function refValue(from, via, to, toAttr) {
   }
   return pick(v) || to;
 }
-function highlightEndpoints(g) {
-  clearEdgeHighlight();
-  for (const id of [g.getAttribute("data-edge-from"), g.getAttribute("data-edge-to")]) {
-    const el = stage.querySelector('[data-node-id="' + (id || "").replace(/"/g, '\\"') + '"]');
-    if (el) { el.classList.add("pin-edge-node"); litNodes.push(el); }
-  }
+function focusNode(node, e) {
+  tip.innerHTML = "<b>" + escapeHtml(node.id) + "</b> · " + escapeHtml(node.kind);
+  placeTip(e);
+  clearFocus();
+  lightNode(node.id);
+  stage.querySelectorAll("[data-edge-from]").forEach((g) => {
+    const from = g.getAttribute("data-edge-from"), to = g.getAttribute("data-edge-to");
+    if (from === node.id || to === node.id) { flowEdge(g); lightNode(from === node.id ? to : from); }
+  });
 }
+function focusEdge(g, e) {
+  const from = g.getAttribute("data-edge-from"), to = g.getAttribute("data-edge-to");
+  const via = g.getAttribute("data-edge-via"), toAttr = g.getAttribute("data-edge-to-attr");
+  let html = "<b>" + escapeHtml(from) + "</b>" + (via ? "." + escapeHtml(via) : "") +
+    " &rarr; <b>" + escapeHtml(to) + "</b>" + (toAttr ? "." + escapeHtml(toAttr) : "");
+  const ref = refValue(from, via, to, toAttr);
+  if (ref) html += "<span class='pin-ref'>" + escapeHtml(ref) + "</span>";
+  tip.innerHTML = html;
+  placeTip(e);
+  clearFocus();
+  flowEdge(g);
+  lightNode(from);
+  lightNode(to);
+}
+// Re-focus only when the hovered target changes; otherwise just move the tooltip.
+let focusKey = null;
 stage.addEventListener("mousemove", (e) => {
   const nodeEl = nodeElFrom(e.target);
   if (nodeEl) {
     const node = NODES[nodeEl.getAttribute("data-node-id")];
     if (node) {
-      tip.innerHTML = "<b>" + escapeHtml(node.id) + "</b> · " + escapeHtml(node.kind);
-      placeTip(e);
-      clearEdgeHighlight();
+      const key = "n:" + node.id;
+      if (key !== focusKey) { focusKey = key; focusNode(node, e); } else { placeTip(e); }
       return;
     }
   }
   const edgeEl = edgeElFrom(e.target);
   if (edgeEl) {
-    const from = edgeEl.getAttribute("data-edge-from");
-    const to = edgeEl.getAttribute("data-edge-to");
-    const via = edgeEl.getAttribute("data-edge-via");
-    const toAttr = edgeEl.getAttribute("data-edge-to-attr");
-    let html = "<b>" + escapeHtml(from) + "</b>" + (via ? "." + escapeHtml(via) : "") +
-      " &rarr; <b>" + escapeHtml(to) + "</b>" + (toAttr ? "." + escapeHtml(toAttr) : "");
-    const ref = refValue(from, via, to, toAttr);
-    if (ref) html += "<span class='pin-ref'>" + escapeHtml(ref) + "</span>";
-    tip.innerHTML = html;
-    placeTip(e);
-    highlightEndpoints(edgeEl);
+    const key = "e:" + edgeEl.getAttribute("data-edge-from") + ">" + edgeEl.getAttribute("data-edge-to");
+    if (key !== focusKey) { focusKey = key; focusEdge(edgeEl, e); } else { placeTip(e); }
     return;
   }
+  if (focusKey) { clearFocus(); focusKey = null; }
   tip.hidden = true;
-  clearEdgeHighlight();
 });
-stage.addEventListener("mouseleave", () => { tip.hidden = true; clearEdgeHighlight(); });
+stage.addEventListener("mouseleave", () => { tip.hidden = true; clearFocus(); focusKey = null; });
 
 // --- click inspector: nodes and edges both open the centered modal ---
 let selectedEls = [];

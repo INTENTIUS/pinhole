@@ -75,6 +75,16 @@ describe("renderHtml", () => {
     expect(html).toContain("class='pin-ref'");
   });
 
+  it("triggers flow animation on the focused set when hovering (not the whole graph)", () => {
+    expect(html).toContain("function focusNode");
+    // hovering a node animates its incident edges via the guarded pin-flow class
+    expect(html).toContain('classList.add("pin-flow")');
+    expect(html).toContain("data-edge-from"); // edges are enumerated to find incident ones
+    // the keyframes it reuses are reduced-motion guarded (shipped in the SVG defs)
+    expect(html).toContain("prefers-reduced-motion");
+    expect(html).toContain("@keyframes pin-flow");
+  });
+
   it("lets you click an edge to pin the relationship into the inspector", () => {
     expect(html).toContain("function renderEdgeInspector");
     expect(html).toContain("edgeElFrom(e.target)"); // click handler dispatches to edges
