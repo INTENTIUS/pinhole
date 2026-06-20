@@ -28,13 +28,18 @@ export const GENERIC_GLYPHS: Record<string, string> = {
   storage: `<rect x="4" y="4" width="16" height="6" rx="1"/><rect x="4" y="13" width="16" height="6" rx="1"/><path d="M7 7h.01M7 16h.01"/>`,
   database: `<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/>`,
   network: `<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M7.6 8 11 15.6M16.4 8 13 15.6M8.4 6h7.2"/>`,
+  // a bordered network boundary with hosts — distinct from generic/network
+  subnet: `<rect x="4" y="4" width="16" height="16" rx="2.5"/><path d="M4 12h16M12 4v16"/>`,
+  firewall: `<path d="M12 3 5.5 5.5v5.5c0 4 2.8 7 6.5 8.5 3.7-1.5 6.5-4.5 6.5-8.5V5.5z"/><path d="M9.5 11.5 11.5 13.5 15 9.5"/>`,
+  gateway: `<path d="M4 20v-7a8 8 0 0 1 16 0v7"/><path d="M9.5 20v-5a2.5 2.5 0 0 1 5 0v5"/>`,
+  route: `<circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="6" r="2.5"/><path d="M8 16 15.5 8.5"/><path d="M12 8.5h3.5V12"/>`,
   queue: `<rect x="3" y="8" width="4" height="8" rx="1"/><rect x="10" y="8" width="4" height="8" rx="1"/><rect x="17" y="8" width="4" height="8" rx="1"/>`,
   function: `<path d="M13 3 5 13h6l-2 8 10-12h-7z"/>`,
   loadbalancer: `<circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="19" r="2.5"/><circle cx="12" cy="19" r="2.5"/><circle cx="19" cy="19" r="2.5"/><path d="M12 7.5v3M5 16.5 11 12M19 16.5 13 12M12 12v4.5"/>`,
   dns: `<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>`,
-  secret: `<circle cx="8" cy="12" r="4"/><path d="M12 12h9M18 12v4M21 12v3"/>`,
+  secret: `<circle cx="8.5" cy="12" r="3.5"/><path d="M12 12h7.5M17 12v3M19.5 12v2.5"/>`,
   user: `<circle cx="12" cy="8" r="4"/><path d="M5 20c0-4 3.5-6 7-6s7 2 7 6"/>`,
-  internet: `<path d="M7 18a4 4 0 0 1 0-8 5 5 0 0 1 9.6-1.4A3.5 3.5 0 0 1 18 18z"/>`,
+  internet: `<path d="M6.5 17.5a4 4 0 0 1 0-8 5 5 0 0 1 9.7-1.4A3.6 3.6 0 0 1 17.5 17.5z"/>`,
   pipeline: `<circle cx="5" cy="12" r="2.5"/><circle cx="12" cy="12" r="2.5"/><circle cx="19" cy="12" r="2.5"/><path d="M7.5 12h2M14.5 12h2"/>`,
 };
 
@@ -49,10 +54,15 @@ const CATEGORY_RULES: Array<[RegExp, string]> = [
   [/cluster|kubernetes|gke|eks|aks|node|pod|deployment|statefulset|container|fargate|ecs/, "container"],
   // DNS before network so route53/clouddns aren't caught by the network `route`.
   [/dns|zone|record|route53|clouddns/, "dns"],
-  // Network gateways/routing before the load-balancer rule, so an InternetGateway
-  // or RouteTable isn't mistaken for an ALB (it used to grab the bare /gateway/).
-  [/vpc|subnet|network|router|route|nat|peering|firewall|securitygroup|internetgateway|gatewayattachment|igw|routetable/, "network"],
-  [/loadbalanc|ingress|alb|elb|frontdoor|appgateway|apigateway/, "loadbalancer"],
+  // Split the old catch-all "network" into recognisable types, so a security
+  // group looks like a shield, a gateway like a gateway, etc. — and these come
+  // before the load-balancer rule so e.g. InternetGateway isn't read as an ALB.
+  [/firewall|securitygroup|security-group|networkacl|\bnacl|\bwaf/, "firewall"],
+  [/internetgateway|natgateway|transitgateway|vpngateway|gatewayattachment|\bigw\b/, "gateway"],
+  [/routetable|routeassociation|\broute\b|peering/, "route"],
+  [/subnet/, "subnet"],
+  [/\bvpc|\bvnet|network|router/, "network"],
+  [/loadbalanc|ingress|\balb|\belb|frontdoor|appgateway|apigateway/, "loadbalancer"],
   [/secret|kms|cert|vault|keyvault|credential|password/, "secret"],
   [/job|pipeline|workflow|action|build|stage/, "pipeline"],
   [/user|account|role|identity|principal|serviceaccount/, "user"],
