@@ -186,6 +186,13 @@ describe("renderContainmentApp (interactive expand)", () => {
     expect(() => new Function(script)).not.toThrow();
   });
 
+  it("polishes inspector values: pretty JSON + per-value scroll + copy buttons", () => {
+    expect(app).toContain("JSON.stringify(v, null, 2)");
+    expect(app).toContain("class='pin-copy'");
+    expect(app).toContain("function copyText");
+    expect(app).toContain("max-height: 240px");
+  });
+
   it("floats a node with no lives-in parent at the top level", () => {
     const assets = rectOf("assets")!, vpc = rectOf("vpc")!;
     expect(inside(assets, vpc)).toBe(false);

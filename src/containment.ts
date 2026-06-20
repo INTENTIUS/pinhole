@@ -618,9 +618,12 @@ const CONTAIN_CSS = `<style>
   .pin-inspector .pin-sub { color: var(--pin-textFaint, #8A93A3); font-size: 12.5px; margin-bottom: 16px; }
   .pin-inspector .pin-section { margin: 18px 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--pin-textFaint, #8A93A3); }
   .pin-attrs { display: flex; flex-direction: column; gap: 10px; }
-  .pin-attr .k { color: var(--pin-textFaint, #8A93A3); font-size: 11.5px; word-break: break-all; }
-  .pin-attr .v { margin-top: 1px; color: var(--pin-textMuted, #7A8699); font-size: 12.5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; white-space: pre-wrap; }
+  .pin-attr .k { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; color: var(--pin-textFaint, #8A93A3); font-size: 11.5px; word-break: break-all; }
+  .pin-attr .v { margin-top: 1px; color: var(--pin-textMuted, #7A8699); font-size: 12.5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; overflow: auto; max-height: 240px; }
   .pin-attr .v.ref { color: var(--pin-accentBar, #4C8DFF); }
+  .pin-copy { flex: none; cursor: pointer; background: none; border: 1px solid var(--pin-neutralStroke, #252C38); border-radius: 5px; color: var(--pin-textFaint, #8A93A3); font-size: 10px; padding: 1px 6px; }
+  .pin-copy:hover { color: var(--pin-textMuted, #7A8699); }
+  .pin-copy.copied { color: var(--pin-accentBar, #4C8DFF); border-color: var(--pin-accentBar, #4C8DFF); }
 </style>`;
 
 const CONTAIN_JS = String.raw`
@@ -722,10 +725,28 @@ function edgeBody(ed) {
 }
 function attrRow(key, value) {
   const ref = value && typeof value === "object" && "$ref" in value;
-  return "<div class='pin-attr'><div class='k'>" + esc(key) + "</div><div class='" + (ref ? "v ref" : "v") + "'>" + esc(fmt(value)) + "</div></div>";
+  return "<div class='pin-attr'><div class='k'><span>" + esc(key) + "</span><button class='pin-copy' type='button'>copy</button></div><div class='" + (ref ? "v ref" : "v") + "'>" + esc(fmt(value)) + "</div></div>";
 }
-function fmt(v) { if (v == null) return String(v); if (typeof v === "object") return "$ref" in v ? "→ " + v["$ref"] : JSON.stringify(v); return String(v); }
+function fmt(v) { if (v == null) return String(v); if (typeof v === "object") return "$ref" in v ? "→ " + v["$ref"] : JSON.stringify(v, null, 2); return String(v); }
 function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+function copyText(text, btn) {
+  const flash = () => { if (!btn) return; const prev = btn.textContent; btn.textContent = "copied"; btn.classList.add("copied"); setTimeout(() => { btn.textContent = prev; btn.classList.remove("copied"); }, 1100); };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(flash, () => fallbackCopy(text, flash));
+  else fallbackCopy(text, flash);
+}
+function fallbackCopy(text, flash) {
+  const ta = document.createElement("textarea"); ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand("copy"); flash(); } catch (e) { /* no clipboard */ }
+  document.body.removeChild(ta);
+}
+document.addEventListener("click", function (e) {
+  const btn = e.target.closest && e.target.closest(".pin-copy");
+  if (!btn) return;
+  e.stopPropagation();
+  const attr = btn.closest(".pin-attr"); const v = attr && attr.querySelector(".v");
+  if (v) copyText(v.textContent, btn);
+});
 
 applyState(typeof START === "number" ? START : 0, true);
 `;

@@ -103,6 +103,14 @@ describe("renderHtml", () => {
     expect(html).toContain("class='pin-attrs'");
   });
 
+  it("polishes inspector values: pretty JSON, per-value scroll, and copy buttons", () => {
+    expect(html).toContain("JSON.stringify(v, null, 2)"); // objects/arrays pretty-printed
+    expect(html).toContain("class='pin-copy'"); // a copy affordance per attr row
+    expect(html).toContain("function copyText"); // clipboard with offline fallback
+    expect(html).toContain("execCommand"); // the file:// fallback path
+    expect(html).toContain("max-height: 240px"); // long values scroll within the row
+  });
+
   it("works offline — no fetched external assets", () => {
     // xmlns="http://www.w3.org/..." is a namespace identifier, never fetched;
     // what must be absent is anything the browser would load over the network.

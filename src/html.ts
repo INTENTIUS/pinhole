@@ -166,10 +166,17 @@ const PAGE_CSS = `<style>
   .pin-inspector dd { margin: 0; color: var(--pin-textMuted, #7A8699); word-break: break-word; }
   /* attrs stack key-over-value so long keys and ARNs/refs get the full width */
   .pin-attrs { display: flex; flex-direction: column; gap: 10px; }
-  .pin-attr .k { color: var(--pin-textFaint, #8A93A3); font-size: 11.5px; word-break: break-all; }
+  .pin-attr .k { display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+    color: var(--pin-textFaint, #8A93A3); font-size: 11.5px; word-break: break-all; }
+  /* long values (pretty JSON, ARN lists) scroll within the row instead of blowing out the panel */
   .pin-attr .v { margin-top: 1px; color: var(--pin-textMuted, #7A8699); font-size: 12.5px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; white-space: pre-wrap; }
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre;
+    overflow: auto; max-height: 240px; }
   .pin-attr .v.ref { color: var(--pin-accentBar, #4C8DFF); }
+  .pin-copy { flex: none; cursor: pointer; background: none; border: 1px solid var(--pin-neutralStroke, #252C38);
+    border-radius: 5px; color: var(--pin-textFaint, #8A93A3); font-size: 10px; padding: 1px 6px; }
+  .pin-copy:hover { color: var(--pin-textMuted, #7A8699); }
+  .pin-copy.copied { color: var(--pin-accentBar, #4C8DFF); border-color: var(--pin-accentBar, #4C8DFF); }
 </style>`;
 
 /** Client logic: live theme switch, hover tooltip, click inspector. Plain DOM,
@@ -379,17 +386,45 @@ function rowPlain(pair) {
 function rowAttr(key, value) {
   const ref = value && typeof value === "object" && "$ref" in value;
   const vcls = ref ? "v ref" : "v";
-  return "<div class='pin-attr'><div class='k'>" + escapeHtml(key) + "</div>" +
+  return "<div class='pin-attr'><div class='k'><span>" + escapeHtml(key) + "</span>" +
+    "<button class='pin-copy' type='button'>copy</button></div>" +
     "<div class='" + vcls + "'>" + escapeHtml(formatValue(value)) + "</div></div>";
 }
 function formatValue(v) {
   if (v == null) return String(v);
   if (typeof v === "object") {
     if ("$ref" in v) return "→ " + v["$ref"];
-    return JSON.stringify(v);
+    return JSON.stringify(v, null, 2); // pretty-printed; .v is monospace + pre
   }
   return String(v);
 }
+// Copy a value to the clipboard (clipboard API, with an offline execCommand fallback).
+function copyText(text, btn) {
+  const flash = () => {
+    if (!btn) return;
+    const prev = btn.textContent;
+    btn.textContent = "copied"; btn.classList.add("copied");
+    setTimeout(() => { btn.textContent = prev; btn.classList.remove("copied"); }, 1100);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(flash, () => fallbackCopy(text, flash));
+  } else fallbackCopy(text, flash);
+}
+function fallbackCopy(text, flash) {
+  const ta = document.createElement("textarea");
+  ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand("copy"); flash(); } catch (e) { /* no clipboard available */ }
+  document.body.removeChild(ta);
+}
+document.addEventListener("click", function (e) {
+  const btn = e.target.closest && e.target.closest(".pin-copy");
+  if (!btn) return;
+  e.stopPropagation();
+  const attr = btn.closest(".pin-attr");
+  const v = attr && attr.querySelector(".v");
+  if (v) copyText(v.textContent, btn);
+});
 function escapeHtml(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
