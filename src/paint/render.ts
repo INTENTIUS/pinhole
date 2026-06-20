@@ -15,6 +15,26 @@ export interface NodeOverride {
   fields?: Field[];
 }
 
+/** A node's painted card footprint, in px. Width is fixed; height grows with the
+ * field rows the card shows. The single source of truth for both the layout
+ * sizes pinhole feeds chant (`--node-sizes`) and the card it paints, so spacing
+ * and drawing agree. */
+export function cardFootprint(node: IRNode, override?: NodeOverride): { w: number; h: number } {
+  const fields = resolveFields(node, { override: override?.fields });
+  return { w: CARD_W, h: CARD_BASE + fields.length * ROW_H };
+}
+
+/** Footprints for every node, keyed by id — the `--node-sizes` map for chant's
+ * size-aware layout (#509). */
+export function cardSizes(
+  ir: GraphIR,
+  overrides: Record<string, NodeOverride> = {},
+): Record<string, { w: number; h: number }> {
+  const out: Record<string, { w: number; h: number }> = {};
+  for (const node of ir.nodes) out[node.id] = cardFootprint(node, overrides[node.id]);
+  return out;
+}
+
 export interface RenderOptions {
   title?: string;
   theme?: Theme;
@@ -37,13 +57,14 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
   const tier = opts.tier ?? "portable";
   const pulse = new Set(opts.animate?.pulse ?? []);
   const flow = opts.animate?.flow ?? false;
-  // chant's --format layout gives positions as an array of {id,x,y} in Graphviz
-  // space (y grows upward). Index them, then map into a px canvas with a title
-  // band on top and y flipped so the graph reads top-to-bottom.
+  // chant's --format layout gives positions as an array of {id,x,y}, y-up
+  // (origin bottom-left). When pinhole passes --node-sizes (it does, via
+  // cardSizes), the layout already spaces for real card footprints — no overlap,
+  // nothing to post-scale (#509). Map into a px canvas with a title band on top,
+  // flipping y so the graph reads top-to-bottom.
   const pos = new Map(layout.nodes.map((n) => [n.id, n]));
-  const maxCardH = CARD_BASE + 4 * ROW_H; // size the canvas for the tallest card
-  const W = Math.ceil(layout.width + CARD_W + MARGIN * 2);
-  const H = Math.ceil(layout.height + maxCardH + MARGIN * 2 + TITLE_BAND);
+  const W = Math.ceil(layout.width + MARGIN * 2);
+  const H = Math.ceil(layout.height + MARGIN * 2 + TITLE_BAND);
 
   const place = (id: string): { cx: number; cy: number } | undefined => {
     const p = pos.get(id);
@@ -73,10 +94,10 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
     const sub = `${node.kind} · ${node.lexicon}`;
     const emphasize = pulse.has(node.id);
     if (tier === "rich") {
-      c.nodeCardRich(x, y, CARD_W, h, status, node.id, sub, fields, emphasize);
+      c.nodeCardRich(x, y, CARD_W, h, status, node.id, sub, fields, emphasize, node.id);
     } else {
       const glyph = resolveGlyph({ lexicon: node.lexicon, kind: node.kind });
-      c.nodeCard(x, y, CARD_W, h, status, node.id, sub, glyph.body, fields, emphasize);
+      c.nodeCard(x, y, CARD_W, h, status, node.id, sub, glyph.body, fields, emphasize, node.id);
     }
   }
 

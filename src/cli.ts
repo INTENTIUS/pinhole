@@ -1,17 +1,23 @@
 import { writeFile } from "node:fs/promises";
 import { graphIr, graphLayout, type GraphOptions } from "./chant.ts";
 import { getTheme } from "./theme.ts";
-import { renderSvg } from "./paint/render.ts";
+import { renderSvg, cardSizes } from "./paint/render.ts";
+import { renderHtml } from "./html.ts";
 
 const USAGE = `pinhole — agentic infra diagrammer
 
 Usage:
-  pinhole render <project-dir> [-o out.svg] [--title <text>] [--theme <name>] [--rich]
+  pinhole render <project-dir> [-o out.svg] [--html out.html] [--title <text>]
+                               [--theme <name>] [--rich]
                                [--detail 0..3] [--lens <kind>:<target>] [--up] [--down]
 
 Themes: dark (default), light, blueprint.
 --rich emits foreignObject HTML labels (browser/inline only); default is portable
 native-SVG text that works as a static image and on GitHub.
+
+--html writes a self-contained, offline interactive artifact: the SVG inlined,
+plus a live theme switcher and hover/click inspection of node attrs. The plain
+\`.svg\` output is unchanged.
 
 Animation (CSS, reduced-motion guarded; animates in a browser, still elsewhere):
   --highlight <id,id>  pulse those nodes (emphasis)
@@ -19,8 +25,8 @@ Animation (CSS, reduced-motion guarded; animates in a browser, still elsewhere):
 
 Renders a chant project to SVG. pinhole shells \`chant graph\` for the graph IR
 and node positions (\`--format ir\` / \`--format layout\`) and paints them, so the
-picture is always lint-clean infra. Graphviz (\`dot\`) must be installed for the
-layout step (\`brew install graphviz\`).
+picture is always lint-clean infra. It feeds chant the measured card sizes so the
+layout spaces for real cards; layout uses dagre, so no native dependency.
 
 Options mirror \`chant graph\`: --detail and --lens shape what's drawn.
 `;
@@ -41,6 +47,7 @@ export async function run(argv: string[]): Promise<number> {
 async function runRender(args: string[]): Promise<number> {
   let dir: string | undefined;
   let out: string | undefined;
+  let html: string | undefined;
   let title: string | undefined;
   let themeName: string | undefined;
   let tier: "portable" | "rich" = "portable";
@@ -51,6 +58,7 @@ async function runRender(args: string[]): Promise<number> {
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "-o" || a === "--out") out = args[++i];
+    else if (a === "--html") html = args[++i];
     else if (a === "--title") title = args[++i];
     else if (a === "--theme") themeName = args[++i];
     else if (a === "--rich") tier = "rich";
@@ -70,13 +78,20 @@ async function runRender(args: string[]): Promise<number> {
 
   try {
     const theme = getTheme(themeName);
-    // Same options to both calls so the IR and layout node sets line up.
-    const [ir, layout] = await Promise.all([graphIr(dir, opts), graphLayout(dir, opts)]);
+    // IR first so we can measure each node's card; then lay out with those sizes
+    // (same options, so the IR and layout node sets line up) and paint.
+    const ir = await graphIr(dir, opts);
+    const layout = await graphLayout(dir, opts, cardSizes(ir));
     const svg = renderSvg(ir, layout, { title, theme, tier, animate: { pulse, flow } });
+    if (html) {
+      await writeFile(html, renderHtml(ir, svg, { title, theme }));
+      process.stderr.write(`pinhole: wrote ${html}\n`);
+    }
     if (out) {
       await writeFile(out, svg);
       process.stderr.write(`pinhole: wrote ${out}\n`);
-    } else {
+    }
+    if (!out && !html) {
       process.stdout.write(svg);
     }
     return 0;

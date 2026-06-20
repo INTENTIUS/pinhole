@@ -2,13 +2,13 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { GraphIR, Layout } from "@intentius/chant";
+import type { GraphIR, Layout, NodeSize } from "@intentius/chant";
 
 /**
  * Thin wrapper over the chant CLI. pinhole gets its data by shelling `chant
  * graph` — the IR (`--format ir`) and node positions (`--format layout`) — and
- * paints them. chant owns synthesis, the lint gate, and Graphviz layout; pinhole
- * owns the picture.
+ * paints them. chant owns synthesis, the lint gate, and layout (size-aware, via
+ * the sizes pinhole passes); pinhole owns the picture.
  */
 
 /** Shared graph options passed through to chant so IR and layout node sets align. */
@@ -55,18 +55,22 @@ function chantBin(): string {
   throw new Error("could not locate the @intentius/chant bin");
 }
 
-function runChant(args: string[]): Promise<string> {
+function runChant(args: string[], input?: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const proc = spawn(chantBin(), args, { stdio: ["ignore", "pipe", "pipe"] });
+    const proc = spawn(chantBin(), args, { stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"] });
     let out = "";
     let err = "";
-    proc.stdout.on("data", (d) => (out += d));
-    proc.stderr.on("data", (d) => (err += d));
+    proc.stdout!.on("data", (d) => (out += d));
+    proc.stderr!.on("data", (d) => (err += d));
     proc.on("error", reject);
     proc.on("close", (code) => {
       if (code === 0) resolve(out);
       else reject(new Error(`chant graph exited ${code}: ${err.trim() || out.trim()}`));
     });
+    if (input !== undefined) {
+      proc.stdin!.write(input);
+      proc.stdin!.end();
+    }
   });
 }
 
@@ -76,8 +80,21 @@ export async function graphIr(projectDir: string, opts: GraphOptions = {}): Prom
   return JSON.parse(out) as GraphIR;
 }
 
-/** Get node positions for a chant project (Graphviz layout). */
-export async function graphLayout(projectDir: string, opts: GraphOptions = {}): Promise<Layout> {
-  const out = await runChant(["graph", projectDir, "--format", "layout", ...graphFlags(opts)]);
+/** Get node positions for a chant project. chant lays out (dagre by default, no
+ * native dependency); pinhole paints. Pass `sizes` (the painter's measured card
+ * footprints) so the layout spaces for real cards — no overlap (#509). Sizes go
+ * over stdin to dodge arg-length limits on large graphs. */
+export async function graphLayout(
+  projectDir: string,
+  opts: GraphOptions = {},
+  sizes?: Record<string, NodeSize>,
+): Promise<Layout> {
+  const args = ["graph", projectDir, "--format", "layout", ...graphFlags(opts)];
+  let input: string | undefined;
+  if (sizes && Object.keys(sizes).length > 0) {
+    args.push("--node-sizes", "-");
+    input = JSON.stringify(sizes);
+  }
+  const out = await runChant(args, input);
   return JSON.parse(out) as Layout;
 }

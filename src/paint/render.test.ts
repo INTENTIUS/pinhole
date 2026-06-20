@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { renderSvg } from "./render.ts";
+import { renderSvg, cardFootprint, cardSizes } from "./render.ts";
 import type { GraphIR, Layout } from "../ir.ts";
 
 const ir: GraphIR = {
@@ -47,5 +47,48 @@ describe("renderSvg animation", () => {
   it("portable output never contains foreignObject", () => {
     const svg = renderSvg(ir, layout, { animate: { pulse: ["vpc"], flow: true } });
     expect(svg).not.toContain("foreignObject");
+  });
+});
+
+describe("renderSvg node hooks", () => {
+  it("stamps data-node-id on every node, in both tiers", () => {
+    for (const tier of ["portable", "rich"] as const) {
+      const svg = renderSvg(ir, layout, { tier });
+      expect(svg).toContain('data-node-id="vpc"');
+      expect(svg).toContain('data-node-id="subnet"');
+    }
+  });
+
+  it("keeps the data-node-id and the pulse class together when emphasized", () => {
+    const svg = renderSvg(ir, layout, { animate: { pulse: ["vpc"] } });
+    expect(svg).toMatch(/data-node-id="vpc" class="pin-pulse"/);
+  });
+});
+
+describe("card sizes (the --node-sizes map for chant's layout)", () => {
+  it("gives a fixed width and a height that grows with field rows", () => {
+    const a = cardFootprint({ id: "a", kind: "Vpc", lexicon: "aws", attrs: {} });
+    const b = cardFootprint({ id: "b", kind: "Vpc", lexicon: "aws", attrs: { region: "us-east1", cidr: "10.0.0.0/16" } });
+    expect(a.w).toBe(b.w); // width is fixed
+    expect(b.h).toBeGreaterThan(a.h); // more fields → taller card
+  });
+
+  it("matches the height renderSvg paints for the same node", () => {
+    // cardSizes feeds the layout; the painter must draw at that same height, or
+    // spacing and drawing disagree. Both derive from cardFootprint.
+    const node = ir.nodes[0];
+    const { h } = cardFootprint(node);
+    const svg = renderSvg(ir, layout);
+    expect(svg).toContain(`height="${h}"`);
+  });
+
+  it("covers every node id", () => {
+    expect(Object.keys(cardSizes(ir)).sort()).toEqual(["subnet", "vpc"]);
+  });
+
+  it("honours per-node field overrides", () => {
+    const base = cardFootprint(ir.nodes[0]);
+    const overridden = cardFootprint(ir.nodes[0], { fields: [{ label: "x", value: "1" }, { label: "y", value: "2" }] });
+    expect(overridden.h).not.toBe(base.h);
   });
 });

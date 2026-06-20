@@ -79,10 +79,12 @@ export class Canvas {
     icon?: string,
     fields: Field[] = [],
     emphasize = false,
+    nodeId?: string,
   ): void {
     const t = statusTokens(s);
     const textX = icon ? x + 46 : x + 16;
-    this.body += emphasize ? `<g class="pin-pulse">` : `<g>`;
+    const idAttr = nodeId ? ` data-node-id="${esc(nodeId)}"` : "";
+    this.body += emphasize ? `<g${idAttr} class="pin-pulse">` : `<g${idAttr}>`;
     this.body += `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="12" fill="${this.c(t.fill)}" stroke="${this.c(t.stroke)}" stroke-width="1.2"/>`;
     this.body += `<rect x="${x}" y="${y}" width="4" height="${h}" rx="2" fill="${this.c(t.bar)}"/>`;
     if (icon) this.body += this.glyph(icon, x + 14, y + 15, 22);
@@ -113,8 +115,10 @@ export class Canvas {
     sub: string,
     fields: Field[] = [],
     emphasize = false,
+    nodeId?: string,
   ): void {
     const t = statusTokens(s);
+    const idAttr = nodeId ? ` data-node-id="${esc(nodeId)}"` : "";
     const cls = emphasize ? ` class="pin-pulse"` : "";
     const items = fields
       .map(
@@ -124,7 +128,7 @@ export class Canvas {
       )
       .join("");
     this.body +=
-      `<foreignObject x="${x}" y="${y}" width="${w}" height="${h}"${cls}>` +
+      `<foreignObject x="${x}" y="${y}" width="${w}" height="${h}"${idAttr}${cls}>` +
       `<div xmlns="http://www.w3.org/1999/xhtml" style="box-sizing:border-box;height:100%;` +
       `border-radius:12px;border:1.2px solid ${this.c(t.stroke)};border-left:4px solid ${this.c(t.bar)};` +
       `background:${this.c(t.fill)};padding:8px 12px;` +
