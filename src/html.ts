@@ -119,8 +119,9 @@ const PAGE_CSS = `<style>
   .pin-stage svg { max-width: 100%; height: auto; display: block; }
   .pin-stage [data-node-id], .pin-stage [data-edge-from] { cursor: pointer; }
   .pin-stage .pin-sel { filter: drop-shadow(0 0 6px var(--pin-accentBar, #4C8DFF)); }
-  /* edge rollover: brighten the line, glow its two endpoint nodes */
-  .pin-stage [data-edge-from]:hover .pin-edge-line { stroke: var(--pin-accentBar, #4C8DFF); stroke-width: 2.4; }
+  /* edge rollover/selection: brighten the line, glow its two endpoint nodes */
+  .pin-stage [data-edge-from]:hover .pin-edge-line,
+  .pin-stage .pin-sel .pin-edge-line { stroke: var(--pin-accentBar, #4C8DFF); stroke-width: 2.4; }
   .pin-stage .pin-edge-node { filter: drop-shadow(0 0 5px var(--pin-accentBar, #4C8DFF)); }
   .pin-tooltip {
     position: fixed; z-index: 10; pointer-events: none;
@@ -254,35 +255,69 @@ stage.addEventListener("mousemove", (e) => {
 });
 stage.addEventListener("mouseleave", () => { tip.hidden = true; clearEdgeHighlight(); });
 
-// --- click inspector ---
-let selected = null;
-function select(el) {
-  if (selected) selected.classList.remove("pin-sel");
-  selected = el;
-  if (el) el.classList.add("pin-sel");
+// --- click inspector: nodes and edges both open the centered modal ---
+let selectedEls = [];
+function clearSelection() {
+  selectedEls.forEach((el) => el.classList.remove("pin-sel"));
+  selectedEls = [];
 }
-function openInspector(node, el) {
-  select(el);
-  inspectorBody.innerHTML = renderInspector(node);
+function selectEls(els) {
+  clearSelection();
+  els.forEach((el) => { if (el) { el.classList.add("pin-sel"); selectedEls.push(el); } });
+}
+function openInspector(bodyHtml, els) {
+  selectEls(els);
+  inspectorBody.innerHTML = bodyHtml;
   backdrop.hidden = false;
   inspector.scrollTop = 0;
 }
 function closeInspector() {
   backdrop.hidden = true;
-  select(null);
+  clearSelection();
+}
+function nodeElById(id) {
+  return stage.querySelector('[data-node-id="' + (id || "").replace(/"/g, '\\"') + '"]');
 }
 stage.addEventListener("click", (e) => {
-  const el = nodeElFrom(e.target);
-  if (!el) return;
-  const node = NODES[el.getAttribute("data-node-id")];
-  if (node) openInspector(node, el);
+  const nodeEl = nodeElFrom(e.target);
+  if (nodeEl) {
+    const node = NODES[nodeEl.getAttribute("data-node-id")];
+    if (node) { openInspector(renderNodeInspector(node), [nodeEl]); return; }
+  }
+  const edgeEl = edgeElFrom(e.target);
+  if (edgeEl) {
+    const from = edgeEl.getAttribute("data-edge-from");
+    const to = edgeEl.getAttribute("data-edge-to");
+    openInspector(renderEdgeInspector(edgeEl), [edgeEl, nodeElById(from), nodeElById(to)]);
+  }
 });
 document.getElementById("pin-close").addEventListener("click", closeInspector);
 // click the dimmed backdrop (but not the dialog) to dismiss
 backdrop.addEventListener("click", (e) => { if (e.target === backdrop) closeInspector(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !backdrop.hidden) closeInspector(); });
 
-function renderInspector(node) {
+// The reference an edge encodes: consumer → producer, the via-property, and the
+// exact $ref the attribute holds.
+function renderEdgeInspector(g) {
+  const from = g.getAttribute("data-edge-from");
+  const to = g.getAttribute("data-edge-to");
+  const via = g.getAttribute("data-edge-via");
+  const toAttr = g.getAttribute("data-edge-to-attr");
+  const fromNode = NODES[from], toNode = NODES[to];
+  const kindOf = (n) => (n ? " · " + n.kind : "");
+  let html = "<h2>" + escapeHtml(from) + " &rarr; " + escapeHtml(to) + "</h2>";
+  html += "<div class='pin-sub'>reference</div>";
+  const meta = [
+    ["consumer", from + kindOf(fromNode)],
+    ["via property", via || "—"],
+    ["producer", to + kindOf(toNode)],
+    ["ref", refValue(from, via, to, toAttr)],
+  ];
+  html += "<dl>" + meta.map(rowPlain).join("") + "</dl>";
+  return html;
+}
+
+function renderNodeInspector(node) {
   let html = "<h2>" + escapeHtml(node.id) + "</h2>";
   html += "<div class='pin-sub'>" + escapeHtml(node.kind) + " · " + escapeHtml(node.lexicon) + "</div>";
 

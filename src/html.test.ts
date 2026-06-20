@@ -75,6 +75,13 @@ describe("renderHtml", () => {
     expect(html).toContain("class='pin-ref'");
   });
 
+  it("lets you click an edge to pin the relationship into the inspector", () => {
+    expect(html).toContain("function renderEdgeInspector");
+    expect(html).toContain("edgeElFrom(e.target)"); // click handler dispatches to edges
+    // selecting an edge lights its endpoints + line (selection drives the modal)
+    expect(html).toContain(".pin-sel .pin-edge-line");
+  });
+
   it("renders the inspector as a centered modal dismissable by backdrop and Escape", () => {
     expect(html).toContain('id="pin-backdrop"');
     expect(html).toContain('role="dialog"');
