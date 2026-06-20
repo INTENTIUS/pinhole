@@ -65,6 +65,21 @@ describe("renderSvg node hooks", () => {
   });
 });
 
+describe("renderSvg text fitting", () => {
+  const longId = "aVeryLongResourceNameThatOverflowsTheCard";
+  const longIr: GraphIR = { nodes: [{ id: longId, kind: "Vpc", lexicon: "aws", attrs: {} }], edges: [], groups: {} };
+  const longLayout: Layout = { width: 200, height: 100, nodes: [{ id: longId, x: 100, y: 50 }] };
+
+  it("ellipsizes a card title too wide for the card (portable text can't clip itself)", () => {
+    const svg = renderSvg(longIr, longLayout);
+    const title = svg.match(/font-weight="700">([^<]*)</)?.[1] ?? "";
+    expect(title.endsWith("…")).toBe(true);
+    expect(title.length).toBeLessThan(longId.length);
+    // the full id still rides on the hook for hover/inspect, just not as visible text
+    expect(svg).toContain(`data-node-id="${longId}"`);
+  });
+});
+
 describe("card sizes (the --node-sizes map for chant's layout)", () => {
   it("gives a fixed width and a height that grows with field rows", () => {
     const a = cardFootprint({ id: "a", kind: "Vpc", lexicon: "aws", attrs: {} });

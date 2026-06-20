@@ -34,6 +34,24 @@ describe("categoryForKind", () => {
     expect(categoryForKind("Vpc")).toBe("network");
     expect(categoryForKind("SomethingUnknown")).toBe("generic");
   });
+
+  it("classifies AWS resource types (full CFN kind strings)", () => {
+    expect(categoryForKind("AWS::EC2::Instance")).toBe("compute");
+    expect(categoryForKind("AWS::S3::Bucket")).toBe("storage");
+    expect(categoryForKind("AWS::RDS::DBInstance")).toBe("database");
+    expect(categoryForKind("AWS::EC2::Subnet")).toBe("network");
+    expect(categoryForKind("AWS::ElasticLoadBalancingV2::LoadBalancer")).toBe("loadbalancer");
+  });
+
+  it("routes gateways/routing to network, not load balancer (regression)", () => {
+    // `gateway` used to be a load-balancer keyword, so these were mislabelled.
+    expect(categoryForKind("AWS::EC2::InternetGateway")).toBe("network");
+    expect(categoryForKind("AWS::EC2::VPCGatewayAttachment")).toBe("network");
+    expect(categoryForKind("AWS::EC2::RouteTable")).toBe("network");
+    expect(categoryForKind("AWS::EC2::Route")).toBe("network");
+    // but real DNS routing still wins for route53
+    expect(categoryForKind("AWS::Route53::RecordSet")).toBe("dns");
+  });
 });
 
 describe("resolveGlyph (chain)", () => {

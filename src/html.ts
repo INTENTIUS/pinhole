@@ -74,10 +74,12 @@ ${PAGE_CSS}
 </header>
 <main class="pin-stage" id="pin-stage">${svg}</main>
 <div class="pin-tooltip" id="pin-tooltip" hidden></div>
-<aside class="pin-inspector" id="pin-inspector" hidden>
-  <button class="pin-close" id="pin-close" aria-label="Close inspector">&times;</button>
-  <div id="pin-inspector-body"></div>
-</aside>
+<div class="pin-backdrop" id="pin-backdrop" hidden>
+  <aside class="pin-inspector" id="pin-inspector" role="dialog" aria-modal="true">
+    <button class="pin-close" id="pin-close" aria-label="Close inspector">&times;</button>
+    <div id="pin-inspector-body"></div>
+  </aside>
+</div>
 <script>
 const THEMES = ${jsonScript(themeTable())};
 const NODES = ${jsonScript(nodeTable(ir))};
@@ -126,24 +128,38 @@ const PAGE_CSS = `<style>
     box-shadow: 0 4px 14px rgba(0,0,0,.35);
   }
   .pin-tooltip b { color: var(--pin-accentBar, #4C8DFF); }
+  /* A centered, wide modal — long AWS names/ARNs need the room a side rail can't give. */
+  .pin-backdrop {
+    position: fixed; inset: 0; z-index: 8; padding: 24px;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,.55);
+  }
+  .pin-backdrop[hidden] { display: none; }
   .pin-inspector {
-    position: fixed; top: 0; right: 0; bottom: 0; width: 320px; max-width: 80vw;
-    z-index: 8; overflow: auto; padding: 16px 18px 24px;
+    width: 680px; max-width: 92vw; max-height: 82vh; overflow: auto;
+    padding: 20px 24px 24px;
     background: var(--pin-bg1, #0F141D);
-    border-left: 1px solid var(--pin-neutralStroke, #252C38);
-    box-shadow: -8px 0 24px rgba(0,0,0,.3);
+    border: 1px solid var(--pin-neutralStroke, #252C38);
+    border-radius: 14px;
+    box-shadow: 0 24px 64px rgba(0,0,0,.5);
   }
   .pin-close {
-    float: right; font-size: 20px; line-height: 1; cursor: pointer;
+    float: right; font-size: 22px; line-height: 1; cursor: pointer;
     color: var(--pin-textMuted, #7A8699); background: none; border: 0;
   }
-  .pin-inspector h2 { margin: 0 0 2px; font-size: 15px; word-break: break-all; }
-  .pin-inspector .pin-sub { color: var(--pin-textFaint, #8A93A3); font-size: 12px; margin-bottom: 14px; }
-  .pin-inspector dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 12.5px; }
+  .pin-inspector h2 { margin: 0 0 2px; font-size: 18px; word-break: break-all; }
+  .pin-inspector .pin-sub { color: var(--pin-textFaint, #8A93A3); font-size: 12.5px; margin-bottom: 16px; }
+  .pin-inspector .pin-section { margin: 18px 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--pin-textFaint, #8A93A3); }
+  /* meta is short → a tidy two-column grid */
+  .pin-inspector dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 0; font-size: 12.5px; }
   .pin-inspector dt { color: var(--pin-textFaint, #8A93A3); }
   .pin-inspector dd { margin: 0; color: var(--pin-textMuted, #7A8699); word-break: break-word; }
-  .pin-inspector dd.ref { color: var(--pin-accentBar, #4C8DFF); }
-  .pin-inspector .pin-section { margin-top: 16px; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--pin-textFaint, #8A93A3); }
+  /* attrs stack key-over-value so long keys and ARNs/refs get the full width */
+  .pin-attrs { display: flex; flex-direction: column; gap: 10px; }
+  .pin-attr .k { color: var(--pin-textFaint, #8A93A3); font-size: 11.5px; word-break: break-all; }
+  .pin-attr .v { margin-top: 1px; color: var(--pin-textMuted, #7A8699); font-size: 12.5px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; white-space: pre-wrap; }
+  .pin-attr .v.ref { color: var(--pin-accentBar, #4C8DFF); }
 </style>`;
 
 /** Client logic: live theme switch, hover tooltip, click inspector. Plain DOM,
@@ -152,6 +168,7 @@ const VIEWER_JS = String.raw`
 const root = document.documentElement;
 const stage = document.getElementById("pin-stage");
 const tip = document.getElementById("pin-tooltip");
+const backdrop = document.getElementById("pin-backdrop");
 const inspector = document.getElementById("pin-inspector");
 const inspectorBody = document.getElementById("pin-inspector-body");
 
@@ -188,19 +205,26 @@ function select(el) {
   selected = el;
   if (el) el.classList.add("pin-sel");
 }
+function openInspector(node, el) {
+  select(el);
+  inspectorBody.innerHTML = renderInspector(node);
+  backdrop.hidden = false;
+  inspector.scrollTop = 0;
+}
+function closeInspector() {
+  backdrop.hidden = true;
+  select(null);
+}
 stage.addEventListener("click", (e) => {
   const el = nodeElFrom(e.target);
   if (!el) return;
   const node = NODES[el.getAttribute("data-node-id")];
-  if (!node) return;
-  select(el);
-  inspectorBody.innerHTML = renderInspector(node);
-  inspector.hidden = false;
+  if (node) openInspector(node, el);
 });
-document.getElementById("pin-close").addEventListener("click", () => {
-  inspector.hidden = true;
-  select(null);
-});
+document.getElementById("pin-close").addEventListener("click", closeInspector);
+// click the dimmed backdrop (but not the dialog) to dismiss
+backdrop.addEventListener("click", (e) => { if (e.target === backdrop) closeInspector(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !backdrop.hidden) closeInspector(); });
 
 function renderInspector(node) {
   let html = "<h2>" + escapeHtml(node.id) + "</h2>";
@@ -218,7 +242,7 @@ function renderInspector(node) {
   const keys = Object.keys(attrs);
   if (keys.length) {
     html += "<div class='pin-section'>attributes</div>";
-    html += "<dl>" + keys.map((k) => rowAttr(k, attrs[k])).join("") + "</dl>";
+    html += "<div class='pin-attrs'>" + keys.map((k) => rowAttr(k, attrs[k])).join("") + "</div>";
   }
   return html;
 }
@@ -226,10 +250,12 @@ function renderInspector(node) {
 function rowPlain(pair) {
   return "<dt>" + escapeHtml(pair[0]) + "</dt><dd>" + escapeHtml(pair[1]) + "</dd>";
 }
+// Stacked key-over-value so long keys and ARNs/$refs get the dialog's full width.
 function rowAttr(key, value) {
   const ref = value && typeof value === "object" && "$ref" in value;
-  const cls = ref ? " class='ref'" : "";
-  return "<dt>" + escapeHtml(key) + "</dt><dd" + cls + ">" + escapeHtml(formatValue(value)) + "</dd>";
+  const vcls = ref ? "v ref" : "v";
+  return "<div class='pin-attr'><div class='k'>" + escapeHtml(key) + "</div>" +
+    "<div class='" + vcls + "'>" + escapeHtml(formatValue(value)) + "</div></div>";
 }
 function formatValue(v) {
   if (v == null) return String(v);

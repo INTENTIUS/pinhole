@@ -84,19 +84,26 @@ export class Canvas {
     const t = statusTokens(s);
     const textX = icon ? x + 46 : x + 16;
     const idAttr = nodeId ? ` data-node-id="${esc(nodeId)}"` : "";
+    // Native SVG <text> doesn't wrap or clip, so budget characters to the card
+    // width and ellipsize — the full text lives in the tooltip + inspector.
+    const titleMax = Math.floor((x + w - 8 - textX) / 8.2);
+    const subMax = Math.floor((x + w - 8 - textX) / 6);
+    const rowMax = Math.floor((w - 24) / 6);
     this.body += emphasize ? `<g${idAttr} class="pin-pulse">` : `<g${idAttr}>`;
     this.body += `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="12" fill="${this.c(t.fill)}" stroke="${this.c(t.stroke)}" stroke-width="1.2"/>`;
     this.body += `<rect x="${x}" y="${y}" width="4" height="${h}" rx="2" fill="${this.c(t.bar)}"/>`;
     if (icon) this.body += this.glyph(icon, x + 14, y + 15, 22);
-    this.body += `<text x="${textX}" y="${y + 26}" fill="${this.c("text")}" font-size="15" font-weight="700">${esc(title)}</text>`;
+    this.body += `<text x="${textX}" y="${y + 26}" fill="${this.c("text")}" font-size="15" font-weight="700">${esc(clip(title, titleMax))}</text>`;
     if (sub) {
-      this.body += `<text x="${textX}" y="${y + 44}" fill="${this.c("textFaint")}" font-size="11">${esc(sub)}</text>`;
+      this.body += `<text x="${textX}" y="${y + 44}" fill="${this.c("textFaint")}" font-size="11">${esc(clip(sub, subMax))}</text>`;
     }
     fields.forEach((f, i) => {
       const fy = y + 64 + i * 16;
+      const label = clip(f.label, Math.min(14, rowMax - 6));
+      const value = clip(f.value, Math.max(4, rowMax - label.length - 2));
       this.body += `<text x="${x + 16}" y="${fy}" font-size="11">`;
-      this.body += `<tspan fill="${this.c("textFaint")}">${esc(f.label)}: </tspan>`;
-      this.body += `<tspan fill="${this.c("textMuted")}">${esc(f.value)}</tspan>`;
+      this.body += `<tspan fill="${this.c("textFaint")}">${esc(label)}: </tspan>`;
+      this.body += `<tspan fill="${this.c("textMuted")}">${esc(value)}</tspan>`;
       this.body += `</text>`;
     });
     this.body += `</g>`;
@@ -120,11 +127,15 @@ export class Canvas {
     const t = statusTokens(s);
     const idAttr = nodeId ? ` data-node-id="${esc(nodeId)}"` : "";
     const cls = emphasize ? ` class="pin-pulse"` : "";
+    // Rich tier is in a browser, so CSS handles the clipping: nowrap + ellipsis
+    // on each line, the value column allowed to shrink (min-width:0).
+    const ell = "white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
     const items = fields
       .map(
         (f) =>
-          `<li style="display:flex;gap:6px;margin:2px 0"><span style="color:${this.c("textFaint")}">${esc(f.label)}</span>` +
-          `<span style="color:${this.c("textMuted")}">${esc(f.value)}</span></li>`,
+          `<li style="display:flex;gap:6px;margin:2px 0;min-width:0">` +
+          `<span style="color:${this.c("textFaint")};flex:none">${esc(f.label)}</span>` +
+          `<span style="color:${this.c("textMuted")};${ell}">${esc(f.value)}</span></li>`,
       )
       .join("");
     this.body +=
@@ -133,9 +144,9 @@ export class Canvas {
       `border-radius:12px;border:1.2px solid ${this.c(t.stroke)};border-left:4px solid ${this.c(t.bar)};` +
       `background:${this.c(t.fill)};padding:8px 12px;` +
       `font:13px 'Inter',system-ui,sans-serif;overflow:hidden">` +
-      `<div style="color:${this.c("text")};font-weight:700;font-size:15px">${esc(title)}</div>` +
-      (sub ? `<div style="color:${this.c("textFaint")};font-size:11px">${esc(sub)}</div>` : "") +
-      (items ? `<ul style="list-style:none;margin:6px 0 0;padding:0;font-size:11px">${items}</ul>` : "") +
+      `<div style="color:${this.c("text")};font-weight:700;font-size:15px;${ell}">${esc(title)}</div>` +
+      (sub ? `<div style="color:${this.c("textFaint")};font-size:11px;${ell}">${esc(sub)}</div>` : "") +
+      (items ? `<ul style="list-style:none;margin:6px 0 0;padding:0;font-size:11px;min-width:0">${items}</ul>` : "") +
       `</div></foreignObject>`;
   }
 
@@ -159,6 +170,12 @@ export class Canvas {
   toString(): string {
     return this.body + `</svg>`;
   }
+}
+
+/** Ellipsize to a character budget (native SVG text can't clip itself). */
+export function clip(s: string, max: number): string {
+  if (max <= 1) return s.length ? "…" : "";
+  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
 export function esc(s: string): string {

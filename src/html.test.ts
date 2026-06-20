@@ -65,6 +65,17 @@ describe("renderHtml", () => {
     expect(html).toContain('data-node-id="vpc"');
   });
 
+  it("renders the inspector as a centered modal dismissable by backdrop and Escape", () => {
+    expect(html).toContain('id="pin-backdrop"');
+    expect(html).toContain('role="dialog"');
+    expect(html).toContain('aria-modal="true"');
+    // backdrop-click and Escape close it
+    expect(html).toContain('e.target === backdrop');
+    expect(html).toContain('"Escape"');
+    // attrs render as stacked key-over-value rows (room for long ARNs/keys)
+    expect(html).toContain("class='pin-attrs'");
+  });
+
   it("works offline — no fetched external assets", () => {
     // xmlns="http://www.w3.org/..." is a namespace identifier, never fetched;
     // what must be absent is anything the browser would load over the network.

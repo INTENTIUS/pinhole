@@ -41,14 +41,19 @@ export const GENERIC_GLYPHS: Record<string, string> = {
 /** Keyword heuristics mapping a resource kind to a generic category. First match wins. */
 const CATEGORY_RULES: Array<[RegExp, string]> = [
   [/bucket|storage|disk|volume|blob|fileshare/, "storage"],
-  [/sql|db|database|crdb|cockroach|postgres|mysql|rds|spanner|dynamo|mongo|redis/, "database"],
+  // Word-boundary the short, collision-prone tokens: `\bdb` so "loadbalancer"
+  // isn't a DB, `\brds` so "RecordSet" isn't (it contains "rds").
+  [/sql|\bdb|database|crdb|cockroach|postgres|mysql|\brds|spanner|dynamo|mongo|redis/, "database"],
   [/queue|topic|sns|sqs|pubsub|pub-sub|kafka|eventhub|servicebus/, "queue"],
   [/function|lambda|cloudfunction/, "function"],
   [/cluster|kubernetes|gke|eks|aks|node|pod|deployment|statefulset|container|fargate|ecs/, "container"],
-  [/loadbalanc|ingress|alb|elb|gateway|frontdoor|appgateway/, "loadbalancer"],
+  // DNS before network so route53/clouddns aren't caught by the network `route`.
   [/dns|zone|record|route53|clouddns/, "dns"],
+  // Network gateways/routing before the load-balancer rule, so an InternetGateway
+  // or RouteTable isn't mistaken for an ALB (it used to grab the bare /gateway/).
+  [/vpc|subnet|network|router|route|nat|peering|firewall|securitygroup|internetgateway|gatewayattachment|igw|routetable/, "network"],
+  [/loadbalanc|ingress|alb|elb|frontdoor|appgateway|apigateway/, "loadbalancer"],
   [/secret|kms|cert|vault|keyvault|credential|password/, "secret"],
-  [/vpc|subnet|network|router|nat|peering|firewall|securitygroup/, "network"],
   [/job|pipeline|workflow|action|build|stage/, "pipeline"],
   [/user|account|role|identity|principal|serviceaccount/, "user"],
   [/internet|cdn|edge|public/, "internet"],
