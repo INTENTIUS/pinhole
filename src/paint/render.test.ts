@@ -77,19 +77,31 @@ describe("fitScale", () => {
     const row = [{ x: 0, y: 0 }, { x: 130, y: 0 }, { x: 260, y: 0 }];
     const { sx, sy } = fitScale(row, 208, 144);
     expect(sx).toBeCloseTo(208 / 130, 5);
-    expect(sy).toBe(1); // nothing stacked vertically
-    // after scaling, the gap between adjacent centers covers a card width
+    expect(sy).toBe(1); // single row, nothing to spread vertically
     expect(130 * sx).toBeGreaterThanOrEqual(208);
   });
 
-  it("spreads a tight column vertically", () => {
-    const col = [{ x: 0, y: 0 }, { x: 0, y: 100 }];
-    const { sx, sy } = fitScale(col, 208, 144);
+  it("spreads consecutive rows vertically until they clear a card height", () => {
+    const stack = [{ x: 0, y: 0 }, { x: 0, y: 100 }];
+    const { sx, sy } = fitScale(stack, 208, 144);
     expect(sy).toBeCloseTo(144 / 100, 5);
-    expect(sx).toBe(1);
+    expect(sx).toBe(1); // nothing shares a row
+    expect(100 * sy).toBeGreaterThanOrEqual(144);
   });
 
-  it("caps the factor for a near-coincident pair", () => {
+  it("does NOT spread x for adjacent-rank pairs that are close in x", () => {
+    // the old bug: a node in row 0 and one in row 1, only 23px apart in x,
+    // must not force horizontal clearance — they're separated vertically.
+    const nodes = [
+      { x: 0, y: 0 }, { x: 200, y: 0 }, // row 0
+      { x: 23, y: 100 }, { x: 223, y: 100 }, // row 1, offset by 23
+    ];
+    const { sx } = fitScale(nodes, 208, 144);
+    expect(sx).toBeCloseTo(208 / 200, 5); // from the same-row 200px gap, not 208/23
+    expect(sx).toBeLessThan(2);
+  });
+
+  it("caps the factor for a near-coincident same-row pair", () => {
     const { sx } = fitScale([{ x: 0, y: 0 }, { x: 2, y: 0 }], 208, 144);
     expect(sx).toBe(10); // MAX_SCALE, not 104
   });

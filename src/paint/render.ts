@@ -14,27 +14,49 @@ const MAX_SCALE = 10; // guard against a degenerate near-coincident pair
 
 /**
  * How much to stretch the layout's coordinate space so fixed-size cards don't
- * overlap. Independent per-axis factors: a pair close on one axis needs clearance
- * on the other. Only grows (never shrinks below 1), capped so a near-coincident
- * pair can't blow the canvas up. Pure; exported for testing.
+ * overlap. A band-aid over chant's size-blind layout — see #16 / chant#509 for
+ * the real fix (feed card sizes into layout). Pure; exported for testing.
+ *
+ * chant lays out `rankdir=TB`, so every node in a rank shares a y — the graph is
+ * a stack of discrete rows. That gives a clean, non-explosive rule:
+ *
+ * - **Vertical**: push consecutive rows apart until they clear a card height.
+ *   Any two nodes in *different* rows are then ≥ a card height apart, so they
+ *   can never overlap regardless of their x.
+ * - **Horizontal**: only nodes in the *same* row can collide side-to-side, so
+ *   scale x by the tightest same-row neighbour pair alone.
+ *
+ * The earlier version tested "roughly same row" as `dy < cardHeight`, which
+ * swept in adjacent-rank pairs (tiny dx, modest dy) and forced absurd horizontal
+ * spread. Keying off true rows avoids that. Only grows (never below 1), capped
+ * so a degenerate near-coincident pair can't blow up the canvas.
  */
 export function fitScale(
   nodes: Array<{ x: number; y: number }>,
   needX: number,
   needY: number,
 ): { sx: number; sy: number } {
+  if (nodes.length < 2) return { sx: 1, sy: 1 };
+  const ROW_EPS = 1; // nodes within this y are the same rank
   let sx = 1;
   let sy = 1;
+
+  // Horizontal: tightest same-row neighbour pair.
   for (let i = 0; i < nodes.length; i++) {
     for (let j = i + 1; j < nodes.length; j++) {
+      if (Math.abs(nodes[i].y - nodes[j].y) > ROW_EPS) continue;
       const dx = Math.abs(nodes[i].x - nodes[j].x);
-      const dy = Math.abs(nodes[i].y - nodes[j].y);
-      // Roughly same row → they need horizontal clearance.
-      if (dy < needY && dx > 1) sx = Math.min(MAX_SCALE, Math.max(sx, needX / dx));
-      // Roughly same column → they need vertical clearance.
-      if (dx < needX && dy > 1) sy = Math.min(MAX_SCALE, Math.max(sy, needY / dy));
+      if (dx > 1) sx = Math.min(MAX_SCALE, Math.max(sx, needX / dx));
     }
   }
+
+  // Vertical: tightest gap between consecutive distinct rows.
+  const rows = [...new Set(nodes.map((n) => Math.round(n.y)))].sort((a, b) => a - b);
+  for (let i = 1; i < rows.length; i++) {
+    const gap = rows[i] - rows[i - 1];
+    if (gap > 1) sy = Math.min(MAX_SCALE, Math.max(sy, needY / gap));
+  }
+
   return { sx, sy };
 }
 
