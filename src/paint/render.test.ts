@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { renderSvg, fitScale } from "./render.ts";
+import { renderSvg, cardFootprint, cardSizes } from "./render.ts";
 import type { GraphIR, Layout } from "../ir.ts";
 
 const ir: GraphIR = {
@@ -65,44 +65,30 @@ describe("renderSvg node hooks", () => {
   });
 });
 
-describe("fitScale", () => {
-  it("never shrinks (factors are >= 1)", () => {
-    const { sx, sy } = fitScale([{ x: 0, y: 0 }, { x: 1000, y: 1000 }], 208, 144);
-    expect(sx).toBe(1);
-    expect(sy).toBe(1);
+describe("card sizes (the --node-sizes map for chant's layout)", () => {
+  it("gives a fixed width and a height that grows with field rows", () => {
+    const a = cardFootprint({ id: "a", kind: "Vpc", lexicon: "aws", attrs: {} });
+    const b = cardFootprint({ id: "b", kind: "Vpc", lexicon: "aws", attrs: { region: "us-east1", cidr: "10.0.0.0/16" } });
+    expect(a.w).toBe(b.w); // width is fixed
+    expect(b.h).toBeGreaterThan(a.h); // more fields → taller card
   });
 
-  it("spreads a tight row horizontally until cards clear", () => {
-    // three centers 130 apart on one row; need 208 of clearance
-    const row = [{ x: 0, y: 0 }, { x: 130, y: 0 }, { x: 260, y: 0 }];
-    const { sx, sy } = fitScale(row, 208, 144);
-    expect(sx).toBeCloseTo(208 / 130, 5);
-    expect(sy).toBe(1); // single row, nothing to spread vertically
-    expect(130 * sx).toBeGreaterThanOrEqual(208);
+  it("matches the height renderSvg paints for the same node", () => {
+    // cardSizes feeds the layout; the painter must draw at that same height, or
+    // spacing and drawing disagree. Both derive from cardFootprint.
+    const node = ir.nodes[0];
+    const { h } = cardFootprint(node);
+    const svg = renderSvg(ir, layout);
+    expect(svg).toContain(`height="${h}"`);
   });
 
-  it("spreads consecutive rows vertically until they clear a card height", () => {
-    const stack = [{ x: 0, y: 0 }, { x: 0, y: 100 }];
-    const { sx, sy } = fitScale(stack, 208, 144);
-    expect(sy).toBeCloseTo(144 / 100, 5);
-    expect(sx).toBe(1); // nothing shares a row
-    expect(100 * sy).toBeGreaterThanOrEqual(144);
+  it("covers every node id", () => {
+    expect(Object.keys(cardSizes(ir)).sort()).toEqual(["subnet", "vpc"]);
   });
 
-  it("does NOT spread x for adjacent-rank pairs that are close in x", () => {
-    // the old bug: a node in row 0 and one in row 1, only 23px apart in x,
-    // must not force horizontal clearance — they're separated vertically.
-    const nodes = [
-      { x: 0, y: 0 }, { x: 200, y: 0 }, // row 0
-      { x: 23, y: 100 }, { x: 223, y: 100 }, // row 1, offset by 23
-    ];
-    const { sx } = fitScale(nodes, 208, 144);
-    expect(sx).toBeCloseTo(208 / 200, 5); // from the same-row 200px gap, not 208/23
-    expect(sx).toBeLessThan(2);
-  });
-
-  it("caps the factor for a near-coincident same-row pair", () => {
-    const { sx } = fitScale([{ x: 0, y: 0 }, { x: 2, y: 0 }], 208, 144);
-    expect(sx).toBe(10); // MAX_SCALE, not 104
+  it("honours per-node field overrides", () => {
+    const base = cardFootprint(ir.nodes[0]);
+    const overridden = cardFootprint(ir.nodes[0], { fields: [{ label: "x", value: "1" }, { label: "y", value: "2" }] });
+    expect(overridden.h).not.toBe(base.h);
   });
 });

@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { graphIr, graphLayout, type GraphOptions } from "./chant.ts";
 import { getTheme } from "./theme.ts";
-import { renderSvg } from "./paint/render.ts";
+import { renderSvg, cardSizes } from "./paint/render.ts";
 import { renderHtml } from "./html.ts";
 
 const USAGE = `pinhole — agentic infra diagrammer
@@ -25,8 +25,8 @@ Animation (CSS, reduced-motion guarded; animates in a browser, still elsewhere):
 
 Renders a chant project to SVG. pinhole shells \`chant graph\` for the graph IR
 and node positions (\`--format ir\` / \`--format layout\`) and paints them, so the
-picture is always lint-clean infra. Graphviz (\`dot\`) must be installed for the
-layout step (\`brew install graphviz\`).
+picture is always lint-clean infra. It feeds chant the measured card sizes so the
+layout spaces for real cards; layout uses dagre, so no native dependency.
 
 Options mirror \`chant graph\`: --detail and --lens shape what's drawn.
 `;
@@ -78,8 +78,10 @@ async function runRender(args: string[]): Promise<number> {
 
   try {
     const theme = getTheme(themeName);
-    // Same options to both calls so the IR and layout node sets line up.
-    const [ir, layout] = await Promise.all([graphIr(dir, opts), graphLayout(dir, opts)]);
+    // IR first so we can measure each node's card; then lay out with those sizes
+    // (same options, so the IR and layout node sets line up) and paint.
+    const ir = await graphIr(dir, opts);
+    const layout = await graphLayout(dir, opts, cardSizes(ir));
     const svg = renderSvg(ir, layout, { title, theme, tier, animate: { pulse, flow } });
     if (html) {
       await writeFile(html, renderHtml(ir, svg, { title, theme }));
