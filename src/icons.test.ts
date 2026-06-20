@@ -34,6 +34,27 @@ describe("categoryForKind", () => {
     expect(categoryForKind("Vpc")).toBe("network");
     expect(categoryForKind("SomethingUnknown")).toBe("generic");
   });
+
+  it("classifies AWS resource types to recognisable, type-specific icons", () => {
+    expect(categoryForKind("AWS::EC2::Instance")).toBe("compute");
+    expect(categoryForKind("AWS::S3::Bucket")).toBe("storage");
+    expect(categoryForKind("AWS::RDS::DBInstance")).toBe("database");
+    expect(categoryForKind("AWS::EC2::VPC")).toBe("network");
+    expect(categoryForKind("AWS::EC2::Subnet")).toBe("subnet");
+    expect(categoryForKind("AWS::EC2::SecurityGroup")).toBe("firewall");
+    expect(categoryForKind("AWS::ElasticLoadBalancingV2::LoadBalancer")).toBe("loadbalancer");
+  });
+
+  it("splits the old catch-all network into gateway/route, not load balancer", () => {
+    // `gateway` used to be a load-balancer keyword; these were also all one icon.
+    expect(categoryForKind("AWS::EC2::InternetGateway")).toBe("gateway");
+    expect(categoryForKind("AWS::EC2::VPCGatewayAttachment")).toBe("gateway");
+    expect(categoryForKind("AWS::EC2::RouteTable")).toBe("route");
+    expect(categoryForKind("AWS::EC2::Route")).toBe("route");
+    expect(categoryForKind("AWS::EC2::SubnetRouteTableAssociation")).toBe("route"); // routing beats subnet
+    // but real DNS routing still wins for route53
+    expect(categoryForKind("AWS::Route53::RecordSet")).toBe("dns");
+  });
 });
 
 describe("resolveGlyph (chain)", () => {

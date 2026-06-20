@@ -74,10 +74,12 @@ ${PAGE_CSS}
 </header>
 <main class="pin-stage" id="pin-stage">${svg}</main>
 <div class="pin-tooltip" id="pin-tooltip" hidden></div>
-<aside class="pin-inspector" id="pin-inspector" hidden>
-  <button class="pin-close" id="pin-close" aria-label="Close inspector">&times;</button>
-  <div id="pin-inspector-body"></div>
-</aside>
+<div class="pin-backdrop" id="pin-backdrop" hidden>
+  <aside class="pin-inspector" id="pin-inspector" role="dialog" aria-modal="true">
+    <button class="pin-close" id="pin-close" aria-label="Close inspector">&times;</button>
+    <div id="pin-inspector-body"></div>
+  </aside>
+</div>
 <script>
 const THEMES = ${jsonScript(themeTable())};
 const NODES = ${jsonScript(nodeTable(ir))};
@@ -115,8 +117,12 @@ const PAGE_CSS = `<style>
   }
   .pin-stage { padding: 16px; }
   .pin-stage svg { max-width: 100%; height: auto; display: block; }
-  .pin-stage [data-node-id] { cursor: pointer; }
+  .pin-stage [data-node-id], .pin-stage [data-edge-from] { cursor: pointer; }
   .pin-stage .pin-sel { filter: drop-shadow(0 0 6px var(--pin-accentBar, #4C8DFF)); }
+  /* edge rollover/selection: brighten the line, glow its two endpoint nodes */
+  .pin-stage [data-edge-from]:hover .pin-edge-line,
+  .pin-stage .pin-sel .pin-edge-line { stroke: var(--pin-accentBar, #4C8DFF); stroke-width: 2.4; }
+  .pin-stage .pin-edge-node { filter: drop-shadow(0 0 5px var(--pin-accentBar, #4C8DFF)); }
   .pin-tooltip {
     position: fixed; z-index: 10; pointer-events: none;
     padding: 4px 8px; border-radius: 6px; font-size: 12px;
@@ -126,24 +132,40 @@ const PAGE_CSS = `<style>
     box-shadow: 0 4px 14px rgba(0,0,0,.35);
   }
   .pin-tooltip b { color: var(--pin-accentBar, #4C8DFF); }
+  .pin-tooltip .pin-ref { display: block; margin-top: 3px; color: var(--pin-textMuted, #7A8699);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+  /* A centered, wide modal — long AWS names/ARNs need the room a side rail can't give. */
+  .pin-backdrop {
+    position: fixed; inset: 0; z-index: 8; padding: 24px;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,.55);
+  }
+  .pin-backdrop[hidden] { display: none; }
   .pin-inspector {
-    position: fixed; top: 0; right: 0; bottom: 0; width: 320px; max-width: 80vw;
-    z-index: 8; overflow: auto; padding: 16px 18px 24px;
+    width: 680px; max-width: 92vw; max-height: 82vh; overflow: auto;
+    padding: 20px 24px 24px;
     background: var(--pin-bg1, #0F141D);
-    border-left: 1px solid var(--pin-neutralStroke, #252C38);
-    box-shadow: -8px 0 24px rgba(0,0,0,.3);
+    border: 1px solid var(--pin-neutralStroke, #252C38);
+    border-radius: 14px;
+    box-shadow: 0 24px 64px rgba(0,0,0,.5);
   }
   .pin-close {
-    float: right; font-size: 20px; line-height: 1; cursor: pointer;
+    float: right; font-size: 22px; line-height: 1; cursor: pointer;
     color: var(--pin-textMuted, #7A8699); background: none; border: 0;
   }
-  .pin-inspector h2 { margin: 0 0 2px; font-size: 15px; word-break: break-all; }
-  .pin-inspector .pin-sub { color: var(--pin-textFaint, #8A93A3); font-size: 12px; margin-bottom: 14px; }
-  .pin-inspector dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 12.5px; }
+  .pin-inspector h2 { margin: 0 0 2px; font-size: 18px; word-break: break-all; }
+  .pin-inspector .pin-sub { color: var(--pin-textFaint, #8A93A3); font-size: 12.5px; margin-bottom: 16px; }
+  .pin-inspector .pin-section { margin: 18px 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--pin-textFaint, #8A93A3); }
+  /* meta is short → a tidy two-column grid */
+  .pin-inspector dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 0; font-size: 12.5px; }
   .pin-inspector dt { color: var(--pin-textFaint, #8A93A3); }
   .pin-inspector dd { margin: 0; color: var(--pin-textMuted, #7A8699); word-break: break-word; }
-  .pin-inspector dd.ref { color: var(--pin-accentBar, #4C8DFF); }
-  .pin-inspector .pin-section { margin-top: 16px; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--pin-textFaint, #8A93A3); }
+  /* attrs stack key-over-value so long keys and ARNs/refs get the full width */
+  .pin-attrs { display: flex; flex-direction: column; gap: 10px; }
+  .pin-attr .k { color: var(--pin-textFaint, #8A93A3); font-size: 11.5px; word-break: break-all; }
+  .pin-attr .v { margin-top: 1px; color: var(--pin-textMuted, #7A8699); font-size: 12.5px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; white-space: pre-wrap; }
+  .pin-attr .v.ref { color: var(--pin-accentBar, #4C8DFF); }
 </style>`;
 
 /** Client logic: live theme switch, hover tooltip, click inspector. Plain DOM,
@@ -152,6 +174,7 @@ const VIEWER_JS = String.raw`
 const root = document.documentElement;
 const stage = document.getElementById("pin-stage");
 const tip = document.getElementById("pin-tooltip");
+const backdrop = document.getElementById("pin-backdrop");
 const inspector = document.getElementById("pin-inspector");
 const inspectorBody = document.getElementById("pin-inspector-body");
 
@@ -163,46 +186,138 @@ function applyTheme(name) {
 }
 document.getElementById("pin-theme-select").addEventListener("change", (e) => applyTheme(e.target.value));
 
-// --- node lookup from an event target ---
+// --- lookups from an event target ---
 function nodeElFrom(target) {
   return target && target.closest ? target.closest("[data-node-id]") : null;
 }
+function edgeElFrom(target) {
+  return target && target.closest ? target.closest("[data-edge-from]") : null;
+}
 
-// --- hover tooltip ---
-stage.addEventListener("mousemove", (e) => {
-  const el = nodeElFrom(e.target);
-  if (!el) { tip.hidden = true; return; }
-  const node = NODES[el.getAttribute("data-node-id")];
-  if (!node) { tip.hidden = true; return; }
-  tip.innerHTML = "<b>" + escapeHtml(node.id) + "</b> · " + escapeHtml(node.kind);
+// --- hover tooltip: nodes, and edges (the relationship + its ref value) ---
+let litNodes = [];
+function clearEdgeHighlight() {
+  litNodes.forEach((el) => el.classList.remove("pin-edge-node"));
+  litNodes = [];
+}
+function placeTip(e) {
   tip.hidden = false;
   tip.style.left = (e.clientX + 14) + "px";
   tip.style.top = (e.clientY + 14) + "px";
+}
+// the exact $ref a consumer attr holds, e.g. "vpc.VpcId" — the producer attribute
+// the relationship actually flows through.
+function refValue(from, via, to, toAttr) {
+  if (toAttr) return to + "." + toAttr;
+  const node = NODES[from];
+  const v = node && node.attrs && via ? node.attrs[via] : null;
+  const pick = (x) => (x && typeof x === "object" && "$ref" in x ? x["$ref"] : null);
+  if (Array.isArray(v)) {
+    for (const it of v) { const r = pick(it); if (r && r.indexOf(to + ".") === 0) return r; }
+  }
+  return pick(v) || to;
+}
+function highlightEndpoints(g) {
+  clearEdgeHighlight();
+  for (const id of [g.getAttribute("data-edge-from"), g.getAttribute("data-edge-to")]) {
+    const el = stage.querySelector('[data-node-id="' + (id || "").replace(/"/g, '\\"') + '"]');
+    if (el) { el.classList.add("pin-edge-node"); litNodes.push(el); }
+  }
+}
+stage.addEventListener("mousemove", (e) => {
+  const nodeEl = nodeElFrom(e.target);
+  if (nodeEl) {
+    const node = NODES[nodeEl.getAttribute("data-node-id")];
+    if (node) {
+      tip.innerHTML = "<b>" + escapeHtml(node.id) + "</b> · " + escapeHtml(node.kind);
+      placeTip(e);
+      clearEdgeHighlight();
+      return;
+    }
+  }
+  const edgeEl = edgeElFrom(e.target);
+  if (edgeEl) {
+    const from = edgeEl.getAttribute("data-edge-from");
+    const to = edgeEl.getAttribute("data-edge-to");
+    const via = edgeEl.getAttribute("data-edge-via");
+    const toAttr = edgeEl.getAttribute("data-edge-to-attr");
+    let html = "<b>" + escapeHtml(from) + "</b>" + (via ? "." + escapeHtml(via) : "") +
+      " &rarr; <b>" + escapeHtml(to) + "</b>" + (toAttr ? "." + escapeHtml(toAttr) : "");
+    const ref = refValue(from, via, to, toAttr);
+    if (ref) html += "<span class='pin-ref'>" + escapeHtml(ref) + "</span>";
+    tip.innerHTML = html;
+    placeTip(e);
+    highlightEndpoints(edgeEl);
+    return;
+  }
+  tip.hidden = true;
+  clearEdgeHighlight();
 });
-stage.addEventListener("mouseleave", () => { tip.hidden = true; });
+stage.addEventListener("mouseleave", () => { tip.hidden = true; clearEdgeHighlight(); });
 
-// --- click inspector ---
-let selected = null;
-function select(el) {
-  if (selected) selected.classList.remove("pin-sel");
-  selected = el;
-  if (el) el.classList.add("pin-sel");
+// --- click inspector: nodes and edges both open the centered modal ---
+let selectedEls = [];
+function clearSelection() {
+  selectedEls.forEach((el) => el.classList.remove("pin-sel"));
+  selectedEls = [];
+}
+function selectEls(els) {
+  clearSelection();
+  els.forEach((el) => { if (el) { el.classList.add("pin-sel"); selectedEls.push(el); } });
+}
+function openInspector(bodyHtml, els) {
+  selectEls(els);
+  inspectorBody.innerHTML = bodyHtml;
+  backdrop.hidden = false;
+  inspector.scrollTop = 0;
+}
+function closeInspector() {
+  backdrop.hidden = true;
+  clearSelection();
+}
+function nodeElById(id) {
+  return stage.querySelector('[data-node-id="' + (id || "").replace(/"/g, '\\"') + '"]');
 }
 stage.addEventListener("click", (e) => {
-  const el = nodeElFrom(e.target);
-  if (!el) return;
-  const node = NODES[el.getAttribute("data-node-id")];
-  if (!node) return;
-  select(el);
-  inspectorBody.innerHTML = renderInspector(node);
-  inspector.hidden = false;
+  const nodeEl = nodeElFrom(e.target);
+  if (nodeEl) {
+    const node = NODES[nodeEl.getAttribute("data-node-id")];
+    if (node) { openInspector(renderNodeInspector(node), [nodeEl]); return; }
+  }
+  const edgeEl = edgeElFrom(e.target);
+  if (edgeEl) {
+    const from = edgeEl.getAttribute("data-edge-from");
+    const to = edgeEl.getAttribute("data-edge-to");
+    openInspector(renderEdgeInspector(edgeEl), [edgeEl, nodeElById(from), nodeElById(to)]);
+  }
 });
-document.getElementById("pin-close").addEventListener("click", () => {
-  inspector.hidden = true;
-  select(null);
-});
+document.getElementById("pin-close").addEventListener("click", closeInspector);
+// click the dimmed backdrop (but not the dialog) to dismiss
+backdrop.addEventListener("click", (e) => { if (e.target === backdrop) closeInspector(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !backdrop.hidden) closeInspector(); });
 
-function renderInspector(node) {
+// The reference an edge encodes: consumer → producer, the via-property, and the
+// exact $ref the attribute holds.
+function renderEdgeInspector(g) {
+  const from = g.getAttribute("data-edge-from");
+  const to = g.getAttribute("data-edge-to");
+  const via = g.getAttribute("data-edge-via");
+  const toAttr = g.getAttribute("data-edge-to-attr");
+  const fromNode = NODES[from], toNode = NODES[to];
+  const kindOf = (n) => (n ? " · " + n.kind : "");
+  let html = "<h2>" + escapeHtml(from) + " &rarr; " + escapeHtml(to) + "</h2>";
+  html += "<div class='pin-sub'>reference</div>";
+  const meta = [
+    ["consumer", from + kindOf(fromNode)],
+    ["via property", via || "—"],
+    ["producer", to + kindOf(toNode)],
+    ["ref", refValue(from, via, to, toAttr)],
+  ];
+  html += "<dl>" + meta.map(rowPlain).join("") + "</dl>";
+  return html;
+}
+
+function renderNodeInspector(node) {
   let html = "<h2>" + escapeHtml(node.id) + "</h2>";
   html += "<div class='pin-sub'>" + escapeHtml(node.kind) + " · " + escapeHtml(node.lexicon) + "</div>";
 
@@ -218,7 +333,7 @@ function renderInspector(node) {
   const keys = Object.keys(attrs);
   if (keys.length) {
     html += "<div class='pin-section'>attributes</div>";
-    html += "<dl>" + keys.map((k) => rowAttr(k, attrs[k])).join("") + "</dl>";
+    html += "<div class='pin-attrs'>" + keys.map((k) => rowAttr(k, attrs[k])).join("") + "</div>";
   }
   return html;
 }
@@ -226,10 +341,12 @@ function renderInspector(node) {
 function rowPlain(pair) {
   return "<dt>" + escapeHtml(pair[0]) + "</dt><dd>" + escapeHtml(pair[1]) + "</dd>";
 }
+// Stacked key-over-value so long keys and ARNs/$refs get the dialog's full width.
 function rowAttr(key, value) {
   const ref = value && typeof value === "object" && "$ref" in value;
-  const cls = ref ? " class='ref'" : "";
-  return "<dt>" + escapeHtml(key) + "</dt><dd" + cls + ">" + escapeHtml(formatValue(value)) + "</dd>";
+  const vcls = ref ? "v ref" : "v";
+  return "<div class='pin-attr'><div class='k'>" + escapeHtml(key) + "</div>" +
+    "<div class='" + vcls + "'>" + escapeHtml(formatValue(value)) + "</div></div>";
 }
 function formatValue(v) {
   if (v == null) return String(v);

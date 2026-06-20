@@ -65,6 +65,34 @@ describe("renderHtml", () => {
     expect(html).toContain('data-node-id="vpc"');
   });
 
+  it("wires edge rollovers: relationship hooks + ref resolution", () => {
+    // the inlined SVG carries the edge's reference …
+    expect(html).toContain('data-edge-from="subnet"');
+    expect(html).toContain('data-edge-to="vpc"');
+    expect(html).toContain("data-edge-via");
+    // … and the viewer resolves the exact $ref the consumer attr holds
+    expect(html).toContain("function refValue");
+    expect(html).toContain("class='pin-ref'");
+  });
+
+  it("lets you click an edge to pin the relationship into the inspector", () => {
+    expect(html).toContain("function renderEdgeInspector");
+    expect(html).toContain("edgeElFrom(e.target)"); // click handler dispatches to edges
+    // selecting an edge lights its endpoints + line (selection drives the modal)
+    expect(html).toContain(".pin-sel .pin-edge-line");
+  });
+
+  it("renders the inspector as a centered modal dismissable by backdrop and Escape", () => {
+    expect(html).toContain('id="pin-backdrop"');
+    expect(html).toContain('role="dialog"');
+    expect(html).toContain('aria-modal="true"');
+    // backdrop-click and Escape close it
+    expect(html).toContain('e.target === backdrop');
+    expect(html).toContain('"Escape"');
+    // attrs render as stacked key-over-value rows (room for long ARNs/keys)
+    expect(html).toContain("class='pin-attrs'");
+  });
+
   it("works offline — no fetched external assets", () => {
     // xmlns="http://www.w3.org/..." is a namespace identifier, never fetched;
     // what must be absent is anything the browser would load over the network.

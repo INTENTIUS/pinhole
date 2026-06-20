@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { defaultFields, resolveFields, MAX_FIELDS } from "./labels.ts";
+import { defaultFields, resolveFields } from "./labels.ts";
 import { registerPack, clearPacks } from "./icons.ts";
 import type { IRNode } from "./ir.ts";
 
@@ -13,24 +13,24 @@ afterEach(() => {
 });
 
 describe("defaultFields", () => {
-  it("keeps scalar attrs, sorted, and skips refs/objects/arrays", () => {
-    const f = defaultFields(node({ region: "us-east1", size: 3, on: true, net: { $ref: "vpc.id" }, tags: ["a"] }));
+  it("keeps short scalar attrs, sorted, and skips refs/objects/arrays", () => {
+    // lean card: at most a couple of short facts; the rest is in the popover.
+    const f = defaultFields(node({ region: "us-east1", on: true, net: { $ref: "vpc.id" }, tags: ["a"] }));
     expect(f).toEqual([
       { label: "on", value: "true" },
       { label: "region", value: "us-east1" },
-      { label: "size", value: "3" },
     ]);
   });
 
-  it("caps at MAX_FIELDS", () => {
+  it("caps to a lean count even with many scalars", () => {
     const attrs = Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`k${i}`, i]));
-    expect(defaultFields(node(attrs)).length).toBe(MAX_FIELDS);
+    expect(defaultFields(node(attrs)).length).toBe(2);
   });
 
-  it("truncates long values", () => {
-    const f = defaultFields(node({ x: "y".repeat(50) }));
-    expect(f[0].value.endsWith("…")).toBe(true);
-    expect(f[0].value.length).toBeLessThanOrEqual(28);
+  it("leaves long values to the popover (blobs aren't card facts)", () => {
+    expect(defaultFields(node({ desc: "y".repeat(50) }))).toEqual([]);
+    // short companions still show
+    expect(defaultFields(node({ desc: "y".repeat(50), tier: "db" }))).toEqual([{ label: "tier", value: "db" }]);
   });
 });
 

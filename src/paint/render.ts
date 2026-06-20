@@ -9,18 +9,31 @@ const CARD_BASE = 52; // title + sub
 const ROW_H = 16; // per field row
 const MARGIN = 80;
 const TITLE_BAND = 90;
+const ICON_W = 104; // icon-mode node footprint
+const ICON_H = 92;
+
+/** How a node is drawn: a full "card" (icon + name + kind + fields) or "icon"
+ * (a glyph badge + a truncated label only — identity at a glance for dense
+ * graphs; the full name/attrs come from hover + the click popover). */
+export type NodeStyle = "card" | "icon";
 
 /** Per-node override of presentation (fields shown). */
 export interface NodeOverride {
   fields?: Field[];
 }
 
-/** A node's painted card footprint, in px. Width is fixed; height grows with the
- * field rows the card shows. The single source of truth for both the layout
- * sizes pinhole feeds chant (`--node-sizes`) and the card it paints, so spacing
- * and drawing agree. */
-export function cardFootprint(node: IRNode, override?: NodeOverride): { w: number; h: number } {
-  const fields = resolveFields(node, { override: override?.fields });
+interface FootprintOptions {
+  style?: NodeStyle;
+  override?: NodeOverride;
+}
+
+/** A node's painted footprint, in px. The single source of truth for both the
+ * layout sizes pinhole feeds chant (`--node-sizes`) and what it paints, so
+ * spacing and drawing agree. Icon nodes are a fixed compact badge; card width is
+ * fixed and height grows with the field rows shown. */
+export function cardFootprint(node: IRNode, opts: FootprintOptions = {}): { w: number; h: number } {
+  if (opts.style === "icon") return { w: ICON_W, h: ICON_H };
+  const fields = resolveFields(node, { override: opts.override?.fields });
   return { w: CARD_W, h: CARD_BASE + fields.length * ROW_H };
 }
 
@@ -28,10 +41,12 @@ export function cardFootprint(node: IRNode, override?: NodeOverride): { w: numbe
  * size-aware layout (#509). */
 export function cardSizes(
   ir: GraphIR,
-  overrides: Record<string, NodeOverride> = {},
+  opts: { style?: NodeStyle; overrides?: Record<string, NodeOverride> } = {},
 ): Record<string, { w: number; h: number }> {
   const out: Record<string, { w: number; h: number }> = {};
-  for (const node of ir.nodes) out[node.id] = cardFootprint(node, overrides[node.id]);
+  for (const node of ir.nodes) {
+    out[node.id] = cardFootprint(node, { style: opts.style, override: opts.overrides?.[node.id] });
+  }
   return out;
 }
 
@@ -40,6 +55,8 @@ export interface RenderOptions {
   theme?: Theme;
   /** "portable" = native SVG text (default); "rich" = foreignObject HTML labels. */
   tier?: "portable" | "rich";
+  /** "card" (default) or "icon" — a compact glyph + truncated label. */
+  style?: NodeStyle;
   /** Per-node presentation overrides, keyed by node id. */
   overrides?: Record<string, NodeOverride>;
   /** Ambient animation (semantic motion; reduced-motion guarded in CSS). */
@@ -55,6 +72,7 @@ export interface RenderOptions {
 export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {}): string {
   const theme = opts.theme ?? getTheme();
   const tier = opts.tier ?? "portable";
+  const style = opts.style ?? "card";
   const pulse = new Set(opts.animate?.pulse ?? []);
   const flow = opts.animate?.flow ?? false;
   // chant's --format layout gives positions as an array of {id,x,y}, y-up
@@ -80,23 +98,36 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
     const a = place(e.from);
     const b = place(e.to);
     if (!a || !b) continue;
-    c.edge(`M ${a.cx} ${a.cy} C ${a.cx} ${(a.cy + b.cy) / 2}, ${b.cx} ${(a.cy + b.cy) / 2}, ${b.cx} ${b.cy}`, 1.4, flow);
+    c.edge(`M ${a.cx} ${a.cy} C ${a.cx} ${(a.cy + b.cy) / 2}, ${b.cx} ${(a.cy + b.cy) / 2}, ${b.cx} ${b.cy}`, 1.4, flow, {
+      from: e.from,
+      to: e.to,
+      via: e.viaAttr,
+      toAttr: e.toAttr,
+    });
   }
 
   for (const node of ir.nodes) {
     const p = place(node.id);
     if (!p) continue;
+    const status = statusFor(node);
+    const emphasize = pulse.has(node.id);
+    const glyph = resolveGlyph({ lexicon: node.lexicon, kind: node.kind });
+
+    if (style === "icon") {
+      const x = Math.round(p.cx - ICON_W / 2);
+      const y = Math.round(p.cy - ICON_H / 2);
+      c.nodeIcon(x, y, ICON_W, ICON_H, status, node.id, glyph.body, emphasize, node.id);
+      continue;
+    }
+
     const fields = resolveFields(node, { override: opts.overrides?.[node.id]?.fields });
     const h = CARD_BASE + fields.length * ROW_H;
     const x = Math.round(p.cx - CARD_W / 2);
     const y = Math.round(p.cy - h / 2);
-    const status = statusFor(node);
     const sub = `${node.kind} · ${node.lexicon}`;
-    const emphasize = pulse.has(node.id);
     if (tier === "rich") {
       c.nodeCardRich(x, y, CARD_W, h, status, node.id, sub, fields, emphasize, node.id);
     } else {
-      const glyph = resolveGlyph({ lexicon: node.lexicon, kind: node.kind });
       c.nodeCard(x, y, CARD_W, h, status, node.id, sub, glyph.body, fields, emphasize, node.id);
     }
   }
