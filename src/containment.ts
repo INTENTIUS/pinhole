@@ -484,24 +484,53 @@ export function segHitsRect(a: { x: number; y: number }, b: { x: number; y: numb
   return t0 < t1;
 }
 
-/** Route an edge from box→box: anchor on borders, and if the straight run crosses
- * any sibling box, bow the curve clear of it (to the side with less excursion).
- * Pure SVG path so the static `-o` export routes identically to the artifact. */
-function routeEdge(from: string, to: string, L: Layout, obstacles: Rect[]): string {
+const CLEAR = 16;
+const cubic = (a: { x: number; y: number }, c1: { x: number; y: number }, c2: { x: number; y: number }, b: { x: number; y: number }): string =>
+  `M ${rnd(a.x)} ${rnd(a.y)} C ${rnd(c1.x)} ${rnd(c1.y)}, ${rnd(c2.x)} ${rnd(c2.y)}, ${rnd(b.x)} ${rnd(b.y)}`;
+
+/** Route an edge from box→box, clear of sibling boxes. Pure SVG so the static
+ * `-o` export routes identically to the artifact.
+ *
+ * - no obstacle  → a gentle vertical S-curve between border anchors;
+ * - stacked (endpoints mostly vertically apart) → bow to the side with less room;
+ * - straddle (endpoints on opposite horizontal sides) → arc over/under, since a
+ *   side bow can't clear an obstacle the line's endpoints flank.
+ */
+export function routeEdge(from: string, to: string, L: Layout, obstacles: Rect[]): string {
   const ra = rectOf(L, from), rb = rectOf(L, to);
   const ca = { x: ra.x + ra.w / 2, y: ra.y + ra.h / 2 };
   const cb = { x: rb.x + rb.w / 2, y: rb.y + rb.h / 2 };
-  const a = borderAnchor(ra, cb), b = borderAnchor(rb, ca);
-  const blockers = obstacles.filter((o) => segHitsRect(a, b, o, 6));
+  const side = borderAnchor(ra, cb), sideB = borderAnchor(rb, ca);
+  const blockers = obstacles.filter((o) => segHitsRect(side, sideB, o, 6));
   if (!blockers.length) {
-    const my = rnd((a.y + b.y) / 2);
-    return `M ${rnd(a.x)} ${rnd(a.y)} C ${rnd(a.x)} ${my}, ${rnd(b.x)} ${my}, ${rnd(b.x)} ${rnd(b.y)}`;
+    const my = (side.y + sideB.y) / 2;
+    return cubic(side, { x: side.x, y: my }, { x: sideB.x, y: my }, sideB);
   }
-  const leftX = Math.min(...blockers.map((o) => o.x)) - 16;
-  const rightX = Math.max(...blockers.map((o) => o.x + o.w)) + 16;
-  const avgX = (a.x + b.x) / 2;
-  const midX = rnd(avgX - leftX <= rightX - avgX ? leftX : rightX);
-  return `M ${rnd(a.x)} ${rnd(a.y)} C ${midX} ${rnd(a.y)}, ${midX} ${rnd(b.y)}, ${rnd(b.x)} ${rnd(b.y)}`;
+
+  // Straddle: the line spans the obstacle horizontally more than vertically — a
+  // side bow would still cut through, so arc over the top or under the bottom.
+  if (Math.abs(cb.x - ca.x) > Math.abs(cb.y - ca.y)) {
+    const minT = Math.min(...blockers.map((o) => o.y));
+    const maxB = Math.max(...blockers.map((o) => o.y + o.h));
+    const midY = (ca.y + cb.y) / 2;
+    // Cost = vertical excursion to crest; veto going over if it'd leave the canvas top.
+    const overCost = minT - CLEAR < 4 ? Infinity : midY - (minT - CLEAR);
+    const goOver = overCost <= maxB + CLEAR - midY;
+    // Anchor on the top (or bottom) edge centers and lift the controls so the
+    // curve crests past the obstacle by ~CLEAR (the cubic peaks at ¾ of the way).
+    const a = { x: ca.x, y: goOver ? ra.y : ra.y + ra.h };
+    const b = { x: cb.x, y: goOver ? rb.y : rb.y + rb.h };
+    const crest = goOver ? minT - CLEAR : maxB + CLEAR;
+    const cy = (crest - 0.25 * (a.y + b.y) / 2) / 0.75; // solve peak = crest
+    return cubic(a, { x: a.x, y: cy }, { x: b.x, y: cy }, b);
+  }
+
+  // Stacked: bow to whichever side needs the shorter excursion.
+  const leftX = Math.min(...blockers.map((o) => o.x)) - CLEAR;
+  const rightX = Math.max(...blockers.map((o) => o.x + o.w)) + CLEAR;
+  const avgX = (side.x + sideB.x) / 2;
+  const midX = avgX - leftX <= rightX - avgX ? leftX : rightX;
+  return cubic(side, { x: midX, y: side.y }, { x: midX, y: sideB.y }, sideB);
 }
 
 /** Obstacle rects for an edge: every rendered box/badge except the endpoints and
