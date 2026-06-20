@@ -25,10 +25,11 @@ import { clip, esc } from "./paint/svg.ts";
 export type Role = "place" | "policy" | "thing" | "plumbing";
 
 const ROLE_RULES: Array<[RegExp, Role]> = [
-  // plumbing first — these would otherwise look like things/places. Includes
-  // supporting resources (IAM roles, log groups) that add little to a diagram.
-  [/routetable|\broute\b|routeassociation|gatewayattachment|internetgateway|natgateway|\beip\b|elasticip|dbsubnetgroup|ingress|egress|\bacl\b|::role|loggroup/, "plumbing"],
-  [/\bvpc|\bvnet|subnet/, "place"],
+  // plumbing first — these would otherwise look like things/places. Subnets are
+  // network detail (AZ duplication etc.): collapse them into the VPC boundary,
+  // recoverable on expand. Also supporting resources (IAM roles, log groups).
+  [/subnet|routetable|\broute\b|routeassociation|gatewayattachment|internetgateway|natgateway|\beip\b|elasticip|ingress|egress|\bacl\b|::role|loggroup/, "plumbing"],
+  [/\bvpc|\bvnet/, "place"],
   [/securitygroup|firewall|\bwaf|networkacl/, "policy"],
 ];
 
@@ -81,12 +82,14 @@ interface Analysis {
 
 /** Salience + containment of an IR.
  *
- * The primary box is the **composite instance** (chant tags each node with the
- * composite that expanded it) — so a `VpcDefault` and a `FargateAlb` each become
- * a box holding their members. *Within* a composite, network lives-in refs nest
- * further (a subnet inside its VPC). A lives-in/spans ref that crosses composites
- * (the app's ALB pointing at the network's subnets) stays a dependency line.
- * Plumbing is dropped and remembered as hidden under its box. */
+ * **Network containment is primary** — a lives-in/spans ref (VpcId/SubnetId/
+ * Subnets) nests a resource in its place (subnet ⊂ VPC), so the VPC encapsulates
+ * everything that lives in it, regardless of which composite expanded it. The
+ * **composite is a secondary grouping**: a composite's members that have *no*
+ * network home (an ECS cluster/service/task definition) gather into a sub-box
+ * nested inside the network their networked siblings anchor to. Only refs that
+ * are neither lives-in nor spans stay as dependency lines, and plumbing is hidden
+ * under the place it lives in. */
 function analyze(ir: GraphIR): Analysis {
   const role: Record<string, Role> = {};
   const kept = new Set<string>();
@@ -102,58 +105,79 @@ function analyze(ir: GraphIR): Analysis {
       compositeType[n.compositeInstance] = n.compositeParent ?? "composite";
     }
   }
-  // A synthetic box per composite instance that has kept members.
-  for (const inst of new Set(Object.values(composite))) {
-    const member = ir.nodes.find((n) => composite[n.id] === inst && kept.has(n.id));
-    if (!member) continue;
-    role[inst] = "place";
-    meta[inst] = { kind: compositeType[inst], lexicon: member.lexicon };
-    kept.add(inst);
-  }
-  // A ref is "cross-composite" only when both ends are in *different* composites
-  // — then it's a dependency line. If either end has no composite, lives-in still
-  // nests (plain network containment).
-  const crossComposite = (a: string, b: string): boolean => !!composite[a] && !!composite[b] && composite[a] !== composite[b];
+
+  // Where each node nests: its lives-in target, or (failing that) what it spans.
+  const nestTarget: Record<string, string> = {};
+  for (const e of ir.edges) if (e.viaAttr && LIVES_IN.has(e.viaAttr) && !nestTarget[e.from]) nestTarget[e.from] = e.to;
+  for (const e of ir.edges) if (e.viaAttr && SPANS.has(e.viaAttr) && !nestTarget[e.from]) nestTarget[e.from] = e.to;
+
+  // The nearest *kept place* a node lives in, walking the chain through collapsed
+  // plumbing (an instance → its subnet → the VPC resolves to the VPC).
+  const homeOf = (id: string): string | undefined => {
+    let cur: string | undefined = id;
+    const seen = new Set<string>();
+    while (cur != null && !seen.has(cur)) {
+      seen.add(cur);
+      const t: string | undefined = nestTarget[cur];
+      if (t == null) return undefined;
+      if (kept.has(t) && role[t] === "place") return t;
+      cur = t;
+    }
+    return undefined;
+  };
 
   const parent: Record<string, string> = {};
-  const depEdges: Array<{ from: string; to: string; via?: string; toAttr?: string }> = [];
-  const hidden: Record<string, string[]> = {};
-  const spans: Array<{ from: string; to: string }> = [];
-  for (const e of ir.edges) {
-    if (e.from === e.to) continue;
-    const livesIn = !!(e.viaAttr && LIVES_IN.has(e.viaAttr));
-    const spansAttr = !!(e.viaAttr && SPANS.has(e.viaAttr));
-    if (livesIn && kept.has(e.to) && !kept.has(e.from)) {
-      (hidden[e.to] = hidden[e.to] || []).push(e.from); // plumbing hidden in a place
-      continue;
-    }
-    if (!kept.has(e.from) || !kept.has(e.to)) continue;
-    if ((livesIn || spansAttr) && crossComposite(e.from, e.to)) {
-      depEdges.push({ from: e.from, to: e.to, via: e.viaAttr, toAttr: e.toAttr }); // cross-composite → line
-    } else if (livesIn) {
-      if (!parent[e.from]) parent[e.from] = e.to; // network nest within a composite
-    } else if (spansAttr) {
-      spans.push({ from: e.from, to: e.to });
-    } else {
-      depEdges.push({ from: e.from, to: e.to, via: e.viaAttr, toAttr: e.toAttr });
-    }
-  }
-  for (const s of spans) if (!parent[s.from]) parent[s.from] = parent[s.to] ?? s.to;
-
-  // Members with no network parent fall to their composite box.
   for (const id of kept) {
-    if (parent[id] || !composite[id] || composite[id] === id) continue;
-    if (kept.has(composite[id])) parent[id] = composite[id];
+    if (role[id] === "place") continue; // places (the VPC) are the containers
+    const h = homeOf(id);
+    if (h && h !== id) parent[id] = h;
   }
+
+  // A composite's members with no network home gather into a sub-box, nested in
+  // the place its networked siblings anchor to.
+  const anchor: Record<string, string> = {};
+  for (const id of kept) {
+    const inst = composite[id];
+    if (inst && parent[id] && !(inst in anchor)) anchor[inst] = parent[id];
+  }
+  const orphans: Record<string, string[]> = {};
+  for (const id of kept) {
+    const inst = composite[id];
+    if (!inst || parent[id] || role[id] === "place") continue;
+    (orphans[inst] = orphans[inst] || []).push(id);
+  }
+  for (const inst of Object.keys(orphans)) {
+    role[inst] = "place";
+    meta[inst] = { kind: compositeType[inst] ?? "composite", lexicon: meta[orphans[inst][0]].lexicon };
+    kept.add(inst);
+    if (anchor[inst]) parent[inst] = anchor[inst];
+    for (const o of orphans[inst]) parent[o] = inst;
+  }
+
+  // Dependency lines: kept→kept refs that didn't become containment.
+  const depEdges: Array<{ from: string; to: string; via?: string; toAttr?: string }> = [];
+  const seenEdge = new Set<string>();
+  for (const e of ir.edges) {
+    if (e.from === e.to || !kept.has(e.from) || !kept.has(e.to)) continue;
+    if (e.viaAttr && (LIVES_IN.has(e.viaAttr) || SPANS.has(e.viaAttr))) continue;
+    const key = `${e.from}>${e.to}`;
+    if (seenEdge.has(key)) continue;
+    seenEdge.add(key);
+    depEdges.push({ from: e.from, to: e.to, via: e.viaAttr, toAttr: e.toAttr });
+  }
+
   const children: Record<string, string[]> = {};
   for (const id of kept) if (parent[id]) (children[parent[id]] = children[parent[id]] || []).push(id);
 
-  // Plumbing not already hidden under a place → hide under its composite box.
-  const hiddenSet = new Set(Object.values(hidden).flat());
+  // Plumbing (incl. collapsed subnets) is hidden under the place it lives in,
+  // else its composite's sub-box — recoverable by expanding that box.
+  const hidden: Record<string, string[]> = {};
   for (const n of ir.nodes) {
-    if (role[n.id] !== "plumbing" || hiddenSet.has(n.id)) continue;
+    if (role[n.id] !== "plumbing") continue;
+    const h = homeOf(n.id);
     const inst = composite[n.id];
-    if (inst && kept.has(inst)) (hidden[inst] = hidden[inst] || []).push(n.id);
+    const home = h && kept.has(h) ? h : inst && kept.has(inst) ? inst : inst ? anchor[inst] : undefined;
+    if (home && kept.has(home)) (hidden[home] = hidden[home] || []).push(n.id);
   }
   return { role, kept, meta, parent, children, depEdges, hidden };
 }

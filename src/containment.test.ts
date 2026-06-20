@@ -5,7 +5,7 @@ import type { GraphIR } from "./ir.ts";
 describe("roleForKind", () => {
   it("classifies places, policies, things, and plumbing", () => {
     expect(roleForKind("AWS::EC2::VPC")).toBe("place");
-    expect(roleForKind("AWS::EC2::Subnet")).toBe("place");
+    expect(roleForKind("AWS::EC2::Subnet")).toBe("plumbing"); // collapsed into the VPC
     expect(roleForKind("AWS::EC2::SecurityGroup")).toBe("policy");
     expect(roleForKind("AWS::EC2::Instance")).toBe("thing");
     expect(roleForKind("AWS::S3::Bucket")).toBe("thing");
@@ -50,10 +50,9 @@ describe("renderContainment", () => {
     expect(svg).toContain('data-node-id="vpc"');
   });
 
-  it("nests lives-in references as boxes: web ⊂ subnet ⊂ vpc", () => {
-    const vpc = rectOf("vpc")!, subnet = rectOf("subnet")!, web = rectOf("web")!;
-    expect(inside(subnet, vpc)).toBe(true);
-    expect(inside(web, subnet)).toBe(true);
+  it("collapses the subnet into the VPC: web ⊂ vpc (resolved through the subnet)", () => {
+    expect(svg).not.toContain('data-node-id="subnet"'); // subnet is collapsed plumbing
+    expect(inside(rectOf("web")!, rectOf("vpc")!)).toBe(true);
   });
 
   it("keeps a security group in the VPC but draws the dependency as a line", () => {
@@ -68,10 +67,12 @@ describe("renderContainment", () => {
     expect(svg).toContain('pointer-events="stroke"'); // wide hit-path
   });
 
-  it("notes what each place contains and hides (drill-in)", () => {
+  it("notes what the VPC contains and hides (drill-in)", () => {
     const notes = containmentNotes(ir);
-    expect(notes.vpc).toContainEqual({ label: "contains", value: expect.stringContaining("subnet") });
-    expect(notes.vpc).toContainEqual({ label: "hides", value: "routeTable" });
+    expect(notes.vpc).toContainEqual({ label: "contains", value: expect.stringContaining("web") });
+    // the collapsed subnet + route table are recoverable on expand
+    expect(notes.vpc).toContainEqual({ label: "hides", value: expect.stringContaining("subnet") });
+    expect(notes.vpc.find((r) => r.label === "hides")!.value).toContain("routeTable");
   });
 });
 
@@ -86,8 +87,8 @@ describe("composite-primary grouping", () => {
       { id: "appSvc", kind: "AWS::ECS::Service", lexicon: "aws", attrs: {}, compositeInstance: "app", compositeParent: "FargateAlb" },
     ],
     edges: [
-      { from: "netSubnet", to: "netVpc", kind: "ref", viaAttr: "VpcId" }, // within net → nest
-      { from: "appAlb", to: "netSubnet", kind: "ref", viaAttr: "Subnets" }, // cross composite → line
+      { from: "netSubnet", to: "netVpc", kind: "ref", viaAttr: "VpcId" }, // subnet collapses into vpc
+      { from: "appAlb", to: "netSubnet", kind: "ref", viaAttr: "Subnets" }, // app's ALB spans → lives in the vpc
     ],
     groups: {},
   };
@@ -98,21 +99,16 @@ describe("composite-primary grouping", () => {
   };
   const within = (a: any, b: any) => a.x >= b.x - 1 && a.y >= b.y - 1 && a.x + a.w <= b.x + b.w + 1 && a.y + a.h <= b.y + b.h + 1;
 
-  it("makes each composite a box holding its members", () => {
-    expect(rect("net")).not.toBeNull();
+  it("encapsulates app resources in the VPC across composites (the ALB resolves through the subnet)", () => {
+    expect(rect("netVpc")).not.toBeNull();
+    expect(rect("netSubnet")).toBeNull(); // subnet collapsed into the VPC
+    expect(within(rect("appAlb"), rect("netVpc"))).toBe(true);
+  });
+
+  it("groups a composite's networkless members into a sub-box nested in the VPC", () => {
     expect(rect("app")).not.toBeNull();
-    expect(within(rect("appAlb"), rect("app"))).toBe(true);
-    expect(within(rect("appSvc"), rect("app"))).toBe(true);
-  });
-
-  it("nests network lives-in within a composite (vpc ⊂ net, subnet ⊂ vpc)", () => {
-    expect(within(rect("netVpc"), rect("net"))).toBe(true);
-    expect(within(rect("netSubnet"), rect("netVpc"))).toBe(true);
-  });
-
-  it("draws cross-composite references as dependency lines", () => {
-    expect(csvg).toContain('data-edge-from="appAlb"');
-    expect(csvg).toContain('data-edge-to="netSubnet"');
+    expect(within(rect("appSvc"), rect("app"))).toBe(true); // ECS service in the app box
+    expect(within(rect("app"), rect("netVpc"))).toBe(true); // …which sits inside the VPC
   });
 });
 
