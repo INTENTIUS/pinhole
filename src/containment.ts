@@ -340,7 +340,6 @@ export function renderContainment(ir: GraphIR, opts: ContainmentOptions = {}): s
   const { L, canvasW, canvasH } = computeLayout(roots, children, role);
 
   // Paint: boxes (outer→inner), dependency lines, then leaf badges.
-  const center = (id: string): { x: number; y: number } => ({ x: L.X[id] + L.W[id] / 2, y: L.Y[id] + L.H[id] / 2 });
   let boxes = "";
   let badges = "";
   const walk = (id: string): void => {
@@ -352,9 +351,12 @@ export function renderContainment(ir: GraphIR, opts: ContainmentOptions = {}): s
 
   // Dependency lines as interactive edge groups — same hooks the HTML artifact
   // uses, so hover shows the reference + ref value and click pins the relationship.
+  // Routed around sibling boxes (border anchors + obstacle bow), not center-to-center.
+  const obstacleIds = [...kept].filter((id) => id in L.X);
+  const route = (from: string, to: string): string => routeEdge(from, to, L, obstaclesFor(from, to, obstacleIds, L, parent));
   let lines = "";
-  for (const e of depEdges) lines += depEdgeStr(e.from, e.to, center(e.from), center(e.to), e.via, e.toAttr, theme);
-  for (const e of implied) lines += depEdgeStr(e.from, e.to, center(e.from), center(e.to), undefined, undefined, theme, true);
+  for (const e of depEdges) lines += depEdgeStr(e.from, e.to, route(e.from, e.to), e.via, e.toAttr, theme);
+  for (const e of implied) lines += depEdgeStr(e.from, e.to, route(e.from, e.to), undefined, undefined, theme, true);
 
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${Math.ceil(canvasW)} ${Math.ceil(canvasH)}" ` +
@@ -446,8 +448,71 @@ function originBadge(id: string, role: Role, m: { kind: string; lexicon: string 
 /** An interactive edge group between two centres. A real reference is a dashed
  * line in the edge colour; an `implied` edge (composite-inferred, e.g. an ALB
  * fronting its service) is a dotted accent line, flagged for the tooltip. */
-function depEdgeStr(from: string, to: string, a: { x: number; y: number }, b: { x: number; y: number }, via: string | undefined, toAttr: string | undefined, theme: Theme, implied = false): string {
-  const d = `M ${a.x} ${a.y} C ${a.x} ${(a.y + b.y) / 2}, ${b.x} ${(a.y + b.y) / 2}, ${b.x} ${b.y}`;
+export interface Rect { x: number; y: number; w: number; h: number }
+const rectOf = (L: Layout, id: string): Rect => ({ x: L.X[id], y: L.Y[id], w: L.W[id], h: L.H[id] });
+const rnd = (n: number): number => Math.round(n * 10) / 10;
+
+/** The point on a rect's border along the ray from its center toward `t` — so an
+ * edge meets the box at its edge, not buried in the middle. */
+export function borderAnchor(r: Rect, t: { x: number; y: number }): { x: number; y: number } {
+  const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+  const dx = t.x - cx, dy = t.y - cy;
+  if (dx === 0 && dy === 0) return { x: cx, y: cy };
+  const s = Math.min(dx !== 0 ? r.w / 2 / Math.abs(dx) : Infinity, dy !== 0 ? r.h / 2 / Math.abs(dy) : Infinity);
+  return { x: cx + dx * s, y: cy + dy * s };
+}
+
+/** Does segment a→b cross rect `r` (grown by `pad`)? Liang–Barsky clip test. */
+export function segHitsRect(a: { x: number; y: number }, b: { x: number; y: number }, r: Rect, pad = 0): boolean {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  let t0 = 0, t1 = 1;
+  const edges: Array<[number, number]> = [
+    [-dx, a.x - (r.x - pad)],
+    [dx, r.x + r.w + pad - a.x],
+    [-dy, a.y - (r.y - pad)],
+    [dy, r.y + r.h + pad - a.y],
+  ];
+  for (const [p, q] of edges) {
+    if (p === 0) {
+      if (q < 0) return false; // parallel and outside this slab
+      continue;
+    }
+    const t = q / p;
+    if (p < 0) { if (t > t1) return false; if (t > t0) t0 = t; }
+    else { if (t < t0) return false; if (t < t1) t1 = t; }
+  }
+  return t0 < t1;
+}
+
+/** Route an edge from box→box: anchor on borders, and if the straight run crosses
+ * any sibling box, bow the curve clear of it (to the side with less excursion).
+ * Pure SVG path so the static `-o` export routes identically to the artifact. */
+function routeEdge(from: string, to: string, L: Layout, obstacles: Rect[]): string {
+  const ra = rectOf(L, from), rb = rectOf(L, to);
+  const ca = { x: ra.x + ra.w / 2, y: ra.y + ra.h / 2 };
+  const cb = { x: rb.x + rb.w / 2, y: rb.y + rb.h / 2 };
+  const a = borderAnchor(ra, cb), b = borderAnchor(rb, ca);
+  const blockers = obstacles.filter((o) => segHitsRect(a, b, o, 6));
+  if (!blockers.length) {
+    const my = rnd((a.y + b.y) / 2);
+    return `M ${rnd(a.x)} ${rnd(a.y)} C ${rnd(a.x)} ${my}, ${rnd(b.x)} ${my}, ${rnd(b.x)} ${rnd(b.y)}`;
+  }
+  const leftX = Math.min(...blockers.map((o) => o.x)) - 16;
+  const rightX = Math.max(...blockers.map((o) => o.x + o.w)) + 16;
+  const avgX = (a.x + b.x) / 2;
+  const midX = rnd(avgX - leftX <= rightX - avgX ? leftX : rightX);
+  return `M ${rnd(a.x)} ${rnd(a.y)} C ${midX} ${rnd(a.y)}, ${midX} ${rnd(b.y)}, ${rnd(b.x)} ${rnd(b.y)}`;
+}
+
+/** Obstacle rects for an edge: every rendered box/badge except the endpoints and
+ * their container ancestors (which legitimately enclose the line). */
+function obstaclesFor(from: string, to: string, ids: string[], L: Layout, parent: Record<string, string>): Rect[] {
+  const skip = new Set<string>([from, to]);
+  for (const end of [from, to]) for (let c = parent[end]; c; c = parent[c]) skip.add(c);
+  return ids.filter((id) => !skip.has(id) && id in L.X).map((id) => rectOf(L, id));
+}
+
+function depEdgeStr(from: string, to: string, d: string, via: string | undefined, toAttr: string | undefined, theme: Theme, implied = false): string {
   const attrs =
     ` data-edge-from="${esc(from)}" data-edge-to="${esc(to)}"` +
     (via ? ` data-edge-via="${esc(via)}"` : "") +
@@ -517,14 +582,16 @@ export function renderContainmentApp(ir: GraphIR, opts: ContainmentOptions = {})
     roots.forEach(walk);
     const pos: Record<string, { x: number; y: number }> = {};
     for (const id of badgeIds) if (id in L.X) pos[id] = center(L, id);
+    const obstacleIds = [...a.kept].filter((id) => id in L.X);
+    const route = (from: string, to: string): string => routeEdge(from, to, L, obstaclesFor(from, to, obstacleIds, L, a.parent));
     let edgesHtml = "";
     for (const e of a.depEdges) {
       if (!(e.from in L.X) || !(e.to in L.X)) continue;
-      edgesHtml += depEdgeStr(e.from, e.to, center(L, e.from), center(L, e.to), e.via, e.toAttr, theme);
+      edgesHtml += depEdgeStr(e.from, e.to, route(e.from, e.to), e.via, e.toAttr, theme);
     }
     for (const e of a.implied) {
       if (!(e.from in L.X) || !(e.to in L.X)) continue;
-      edgesHtml += depEdgeStr(e.from, e.to, center(L, e.from), center(L, e.to), undefined, undefined, theme, true);
+      edgesHtml += depEdgeStr(e.from, e.to, route(e.from, e.to), undefined, undefined, theme, true);
     }
     return { boxes: boxesHtml, edges: edgesHtml, pos };
   });
