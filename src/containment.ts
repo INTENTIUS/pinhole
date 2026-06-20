@@ -18,7 +18,7 @@
  * `data-node-id` so the HTML artifact's hover/inspect work over it.
  */
 import type { GraphIR } from "./ir.ts";
-import { getTheme, v, defs, type Theme } from "./theme.ts";
+import { getTheme, v, defs, THEMES, type Theme } from "./theme.ts";
 import { resolveGlyph } from "./icons.ts";
 import { clip, esc } from "./paint/svg.ts";
 
@@ -40,6 +40,9 @@ export function roleForKind(kind: string): Role {
 
 /** Consumer-side attrs that mean "lives in" (containment), not "uses" (dependency). */
 const LIVES_IN = new Set(["VpcId", "SubnetId"]);
+/** Attrs where a resource *spans* several places (a load balancer across subnets);
+ * it lives in their common ancestor (the VPC), not in any one of them. */
+const SPANS = new Set(["Subnets", "SubnetIds"]);
 
 const MARGIN = 60;
 const TITLE_BAND = 84;
@@ -64,24 +67,68 @@ interface Layout {
 
 const uniq = (xs: string[]): string[] => [...new Set(xs)];
 
+interface Analysis {
+  role: Record<string, Role>;
+  kept: Set<string>;
+  meta: Record<string, { kind: string; lexicon: string }>;
+  parent: Record<string, string>;
+  children: Record<string, string[]>;
+  depEdges: Array<{ from: string; to: string; via?: string; toAttr?: string }>;
+  /** place id → plumbing ids that live in it (dropped from the diagram). */
+  hidden: Record<string, string[]>;
+}
+
+/** Salience + containment of an IR: drop plumbing, derive the containment tree
+ * (lives-in nesting + spanning resources to a common ancestor), the dependency
+ * edges that stay as lines, and the plumbing hidden inside each place. */
+function analyze(ir: GraphIR): Analysis {
+  const role: Record<string, Role> = {};
+  const kept = new Set<string>();
+  const meta: Record<string, { kind: string; lexicon: string }> = {};
+  for (const n of ir.nodes) {
+    role[n.id] = roleForKind(n.kind);
+    meta[n.id] = { kind: n.kind, lexicon: n.lexicon };
+    if (role[n.id] !== "plumbing") kept.add(n.id);
+  }
+
+  const parent: Record<string, string> = {};
+  const children: Record<string, string[]> = {};
+  const depEdges: Array<{ from: string; to: string; via?: string; toAttr?: string }> = [];
+  const hidden: Record<string, string[]> = {};
+  const spans: Array<{ from: string; to: string }> = [];
+  for (const e of ir.edges) {
+    if (e.from === e.to) continue;
+    const livesIn = !!(e.viaAttr && LIVES_IN.has(e.viaAttr));
+    // plumbing that lives in a kept place is hidden under it (not drawn)
+    if (livesIn && kept.has(e.to) && !kept.has(e.from)) {
+      (hidden[e.to] = hidden[e.to] || []).push(e.from);
+      continue;
+    }
+    if (!kept.has(e.from) || !kept.has(e.to)) continue;
+    if (livesIn && !parent[e.from]) {
+      parent[e.from] = e.to;
+      (children[e.to] = children[e.to] || []).push(e.from);
+    } else if (e.viaAttr && SPANS.has(e.viaAttr)) {
+      spans.push({ from: e.from, to: e.to });
+    } else {
+      depEdges.push({ from: e.from, to: e.to, via: e.viaAttr, toAttr: e.toAttr });
+    }
+  }
+  // A spanning resource lives in the common ancestor of what it spans.
+  for (const s of spans) {
+    if (parent[s.from]) continue;
+    const ancestor = parent[s.to] ?? s.to;
+    parent[s.from] = ancestor;
+    (children[ancestor] = children[ancestor] || []).push(s.from);
+  }
+  return { role, kept, meta, parent, children, depEdges, hidden };
+}
+
 /** Per-node inspector notes for the containment view: what a place *contains*
  * (its kept children) and what plumbing it *hides* (dropped resources that live
  * in it). So clicking a box drills into the detail the salience filter removed. */
 export function containmentNotes(ir: GraphIR): Record<string, Array<{ label: string; value: string }>> {
-  const role: Record<string, Role> = {};
-  const kept = new Set<string>();
-  for (const n of ir.nodes) {
-    role[n.id] = roleForKind(n.kind);
-    if (role[n.id] !== "plumbing") kept.add(n.id);
-  }
-  const children: Record<string, string[]> = {};
-  const hidden: Record<string, string[]> = {};
-  for (const e of ir.edges) {
-    if (e.from === e.to || !e.viaAttr || !LIVES_IN.has(e.viaAttr)) continue;
-    if (!kept.has(e.to)) continue;
-    if (kept.has(e.from)) (children[e.to] = children[e.to] || []).push(e.from);
-    else (hidden[e.to] = hidden[e.to] || []).push(e.from); // plumbing living in a kept place
-  }
+  const { kept, children, hidden } = analyze(ir);
   const notes: Record<string, Array<{ label: string; value: string }>> = {};
   for (const id of kept) {
     const rows: Array<{ label: string; value: string }> = [];
@@ -92,43 +139,24 @@ export function containmentNotes(ir: GraphIR): Record<string, Array<{ label: str
   return notes;
 }
 
-/** Render a graph IR as a salience-filtered containment diagram (SVG string). */
-export function renderContainment(ir: GraphIR, opts: ContainmentOptions = {}): string {
-  const theme = opts.theme ?? getTheme();
+/** Is this node drawn as a container box (has children, or is a place)? */
+function isBox(id: string, children: Record<string, string[]>, role: Record<string, Role>): boolean {
+  return (children[id]?.length ?? 0) > 0 || role[id] === "place";
+}
 
-  // 1. Salience: keep everything that isn't plumbing.
-  const role: Record<string, Role> = {};
-  const kept = new Set<string>();
-  const meta: Record<string, { kind: string; lexicon: string }> = {};
-  for (const n of ir.nodes) {
-    role[n.id] = roleForKind(n.kind);
-    meta[n.id] = { kind: n.kind, lexicon: n.lexicon };
-    if (role[n.id] !== "plumbing") kept.add(n.id);
-  }
-
-  // 2. Containment: a lives-in edge (kept→kept) gives a parent.
-  const parent: Record<string, string> = {};
-  const children: Record<string, string[]> = {};
-  const depEdges: Array<{ from: string; to: string; via?: string; toAttr?: string }> = [];
-  for (const e of ir.edges) {
-    if (!kept.has(e.from) || !kept.has(e.to) || e.from === e.to) continue;
-    if (e.viaAttr && LIVES_IN.has(e.viaAttr) && !parent[e.from]) {
-      parent[e.from] = e.to;
-      (children[e.to] = children[e.to] || []).push(e.from);
-    } else {
-      depEdges.push({ from: e.from, to: e.to, via: e.viaAttr, toAttr: e.toAttr });
-    }
-  }
-  const roots = [...kept].filter((id) => !parent[id]).sort();
-
-  // 3. Layout: size bottom-up (nested grid), then place top-down.
+/** Nested-grid layout: size bottom-up, place top-down, roots in a row. Pure;
+ * reused per expand-state by the interactive view. */
+function computeLayout(
+  roots: string[],
+  children: Record<string, string[]>,
+  role: Record<string, Role>,
+): { L: Layout; canvasW: number; canvasH: number } {
   const L: Layout = { W: {}, H: {}, X: {}, Y: {}, grid: {} };
-  const isBox = (id: string): boolean => (children[id]?.length ?? 0) > 0 || role[id] === "place";
   const size = (id: string): void => {
     const ch = children[id] ?? [];
     if (ch.length === 0) {
-      L.W[id] = isBox(id) ? LEAF_W : LEAF_W;
-      L.H[id] = isBox(id) ? LEAF_H : LEAF_H;
+      L.W[id] = LEAF_W;
+      L.H[id] = LEAF_H;
       return;
     }
     ch.forEach(size);
@@ -151,9 +179,7 @@ export function renderContainment(ir: GraphIR, opts: ContainmentOptions = {}): s
     ch.forEach((c, i) => {
       const col = i % cols;
       const row = Math.floor(i / cols);
-      const cellX = cx0 + col * (cellW + GAP);
-      const cellY = cy0 + row * (cellH + GAP);
-      place(c, cellX + (cellW - L.W[c]) / 2, cellY + (cellH - L.H[c]) / 2);
+      place(c, cx0 + col * (cellW + GAP) + (cellW - L.W[c]) / 2, cy0 + row * (cellH + GAP) + (cellH - L.H[c]) / 2);
     });
   };
   roots.forEach(size);
@@ -164,15 +190,22 @@ export function renderContainment(ir: GraphIR, opts: ContainmentOptions = {}): s
     rx += L.W[r] + GAP * 2;
     maxH = Math.max(maxH, L.H[r]);
   }
-  const canvasW = Math.max(rx + MARGIN, 480);
-  const canvasH = MARGIN + TITLE_BAND + maxH + MARGIN;
+  return { L, canvasW: Math.max(rx + MARGIN, 480), canvasH: MARGIN + TITLE_BAND + maxH + MARGIN };
+}
 
-  // 4. Paint: boxes (outer→inner), dependency lines, then leaf badges.
+/** Render a graph IR as a salience-filtered containment diagram (SVG string). */
+export function renderContainment(ir: GraphIR, opts: ContainmentOptions = {}): string {
+  const theme = opts.theme ?? getTheme();
+  const { role, kept, meta, parent, children, depEdges } = analyze(ir);
+  const roots = [...kept].filter((id) => !parent[id]).sort();
+  const { L, canvasW, canvasH } = computeLayout(roots, children, role);
+
+  // Paint: boxes (outer→inner), dependency lines, then leaf badges.
   const center = (id: string): { x: number; y: number } => ({ x: L.X[id] + L.W[id] / 2, y: L.Y[id] + L.H[id] / 2 });
   let boxes = "";
   let badges = "";
   const walk = (id: string): void => {
-    if (isBox(id)) boxes += box(id, L, role[id], meta[id], theme);
+    if (isBox(id, children, role)) boxes += box(id, L, role[id], meta[id], theme);
     else badges += badge(id, L, role[id], meta[id], theme);
     (children[id] ?? []).forEach(walk);
   };
@@ -257,3 +290,265 @@ function glyphAt(body: string, gx: number, gy: number, size: number, theme: Them
     `stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${body}</g>`
   );
 }
+
+// ---------------------------------------------------------------------------
+// Interactive expandable containment (#9 follow-up): click a place to expand it
+// in place and reveal the plumbing the salience filter hid; click again to
+// collapse. Leaf nodes are drawn once and glide (FLIP) between states; the box
+// and edge layers are pre-rendered per state and swapped.
+// ---------------------------------------------------------------------------
+
+/** A leaf badge drawn at the origin (0,0), so a transform can place/move it. */
+function originBadge(id: string, role: Role, m: { kind: string; lexicon: string }, theme: Theme): string {
+  const k = (26 / 24).toFixed(4);
+  const dim = role === "plumbing" ? ` opacity="0.6"` : "";
+  return (
+    `<g class="pin-cnode" data-node-id="${esc(id)}" transform="translate(0,0)" style="opacity:0"${dim}>` +
+    `<rect x="-24" y="-24" width="48" height="48" rx="13" fill="${v(theme, "neutralFill")}" stroke="${v(theme, "neutralStroke")}" stroke-width="1.4"/>` +
+    `<rect x="-24" y="-24" width="48" height="4" rx="2" fill="${v(theme, "neutralBar")}"/>` +
+    `<g transform="translate(-13 -12) scale(${k})" fill="none" stroke="${v(theme, "textFaint")}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${resolveGlyph({ lexicon: m.lexicon, kind: m.kind }).body}</g>` +
+    `<text y="34" text-anchor="middle" fill="${v(theme, "text")}" font-size="11" font-weight="600">${esc(clip(id, 16))}</text>` +
+    `</g>`
+  );
+}
+
+/** An interactive dependency edge group between two centres. */
+function depEdgeStr(from: string, to: string, a: { x: number; y: number }, b: { x: number; y: number }, via: string | undefined, toAttr: string | undefined, theme: Theme): string {
+  const d = `M ${a.x} ${a.y} C ${a.x} ${(a.y + b.y) / 2}, ${b.x} ${(a.y + b.y) / 2}, ${b.x} ${b.y}`;
+  const attrs = ` data-edge-from="${esc(from)}" data-edge-to="${esc(to)}"` + (via ? ` data-edge-via="${esc(via)}"` : "") + (toAttr ? ` data-edge-to-attr="${esc(toAttr)}"` : "");
+  return (
+    `<g${attrs}><path class="pin-edge-line" d="${esc(d)}" fill="none" stroke="${v(theme, "edge")}" stroke-width="1.4" stroke-linecap="round" stroke-dasharray="5 5"/>` +
+    `<path d="${esc(d)}" fill="none" stroke="transparent" stroke-width="14" stroke-linecap="round" pointer-events="stroke"/></g>`
+  );
+}
+
+function jsonScriptC(value: unknown): string {
+  return JSON.stringify(value).replace(/</g, "\\u003c");
+}
+
+/** Build the interactive expandable containment artifact (offline HTML). */
+export function renderContainmentApp(ir: GraphIR, opts: ContainmentOptions = {}): string {
+  const theme = opts.theme ?? getTheme();
+  const title = opts.title ?? "Infrastructure";
+  const a = analyze(ir);
+  const roots = [...a.kept].filter((id) => !a.parent[id]).sort();
+
+  // states: collapsed, then one per place that hides plumbing (its hidden
+  // plumbing added as children, so the layout reflows to make room).
+  const expandable = roots.flatMap(function flat(id): string[] {
+    const here = a.hidden[id]?.length ? [id] : [];
+    return here.concat((a.children[id] ?? []).flatMap(flat));
+  });
+  const stateDefs: Array<{ expand?: string }> = [{}, ...expandable.map((id) => ({ expand: id }))];
+  const expandIndex: Record<string, number> = {};
+  expandable.forEach((id, i) => (expandIndex[id] = i + 1));
+
+  const center = (L: Layout, id: string) => ({ x: Math.round(L.X[id] + L.W[id] / 2), y: Math.round(L.Y[id] + L.H[id] / 2) });
+  let maxW = 480;
+  let maxH = 300;
+  const states = stateDefs.map((def) => {
+    const children: Record<string, string[]> = {};
+    for (const k of Object.keys(a.children)) children[k] = a.children[k].slice();
+    if (def.expand) children[def.expand] = (children[def.expand] ?? []).concat(a.hidden[def.expand] ?? []);
+    const { L, canvasW, canvasH } = computeLayout(roots, children, a.role);
+    maxW = Math.max(maxW, canvasW);
+    maxH = Math.max(maxH, canvasH);
+    const vis = Object.keys(L.X);
+    let boxesHtml = "";
+    const pos: Record<string, { x: number; y: number }> = {};
+    const walk = (id: string): void => {
+      if (isBox(id, children, a.role)) boxesHtml += box(id, L, a.role[id], a.meta[id], theme);
+      else pos[id] = center(L, id);
+      (children[id] ?? []).forEach(walk);
+    };
+    roots.forEach(walk);
+    let edgesHtml = "";
+    for (const e of a.depEdges) {
+      if (!(e.from in L.X) || !(e.to in L.X)) continue;
+      edgesHtml += depEdgeStr(e.from, e.to, center(L, e.from), center(L, e.to), e.via, e.toAttr, theme);
+    }
+    return { boxes: boxesHtml, edges: edgesHtml, pos, vis };
+  });
+
+  // union of leaf nodes (everything that isn't a place box) — drawn once.
+  const leaves = [...a.kept, ...Object.values(a.hidden).flat()].filter((id) => a.role[id] !== "place");
+  const badges = [...new Set(leaves)].map((id) => originBadge(id, a.role[id], a.meta[id], theme)).join("");
+
+  const META: Record<string, { kind: string; lexicon: string; attrs: unknown }> = {};
+  for (const n of ir.nodes) META[n.id] = { kind: n.kind, lexicon: n.lexicon, attrs: n.attrs };
+
+  const themeOptions = Object.keys(THEMES).map((n) => `<option value="${esc(n)}"${n === theme.name ? " selected" : ""}>${esc(n)}</option>`).join("");
+
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${Math.ceil(maxW)} ${Math.ceil(maxH)}" ` +
+    `font-family="'Inter','SF Pro Display',system-ui,-apple-system,'Segoe UI',sans-serif">` +
+    defs(theme) +
+    `<rect width="${Math.ceil(maxW)}" height="${Math.ceil(maxH)}" fill="url(#pin-bg)"/>` +
+    `<rect width="${Math.ceil(maxW)}" height="${Math.ceil(maxH)}" fill="url(#pin-dots)" opacity="0.6"/>` +
+    `<text x="60" y="52" fill="${v(theme, "text")}" font-size="22" font-weight="700">${esc(title)}</text>` +
+    `<g id="pin-boxes"></g><g id="pin-edges"></g>${badges}</svg>`;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(title)} · pinhole containment</title>
+${CONTAIN_CSS}
+</head>
+<body>
+<header class="pin-bar">
+  <h1>${esc(title)}</h1>
+  <span class="pin-hint">click a box to expand the plumbing it hides</span>
+  <label class="pin-theme">theme <select id="pin-theme-select">${themeOptions}</select></label>
+</header>
+<main class="pin-stage" id="pin-stage">${svg}</main>
+<div class="pin-tooltip" id="pin-tooltip" hidden></div>
+<div class="pin-backdrop" id="pin-backdrop" hidden>
+  <aside class="pin-inspector" id="pin-inspector" role="dialog" aria-modal="true">
+    <button class="pin-close" id="pin-close" aria-label="Close inspector">&times;</button>
+    <div id="pin-inspector-body"></div>
+  </aside>
+</div>
+<script>
+const THEMES = ${jsonScriptC(Object.fromEntries(Object.entries(THEMES).map(([k, t]) => [k, t.tokens])))};
+const STATES = ${jsonScriptC(states)};
+const EXPAND = ${jsonScriptC(expandIndex)};
+const META = ${jsonScriptC(META)};
+${CONTAIN_JS}
+</script>
+</body>
+</html>
+`;
+}
+
+const CONTAIN_CSS = `<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif; color: var(--pin-text, #E6EDF3); background: var(--pin-bg0, #0B0E14); }
+  .pin-bar { display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--pin-neutralStroke, #252C38); background: var(--pin-bg1, #0F141D); position: sticky; top: 0; z-index: 5; }
+  .pin-bar h1 { margin: 0; font-size: 16px; font-weight: 700; }
+  .pin-hint { font-size: 12px; color: var(--pin-textFaint, #8A93A3); }
+  .pin-theme { margin-left: auto; font-size: 12px; color: var(--pin-textMuted, #7A8699); display: flex; gap: 8px; align-items: center; }
+  .pin-theme select { font: inherit; color: var(--pin-text, #E6EDF3); background: var(--pin-neutralFill, #161B24); border: 1px solid var(--pin-neutralStroke, #252C38); border-radius: 6px; padding: 4px 8px; }
+  .pin-stage { padding: 16px; }
+  .pin-stage svg { max-width: 100%; height: auto; display: block; }
+  .pin-cnode { transition: transform .55s cubic-bezier(.4,0,.2,1), opacity .35s ease; cursor: pointer; }
+  .pin-cnode.pin-instant { transition: none; }
+  .pin-cnode:hover { filter: drop-shadow(0 0 6px var(--pin-accentBar, #4C8DFF)); }
+  #pin-boxes [data-node-id] { cursor: pointer; }
+  #pin-boxes [data-node-id]:hover rect { stroke: var(--pin-accentBar, #4C8DFF); }
+  .pin-edge-line { transition: opacity .3s ease; }
+  [data-edge-from]:hover .pin-edge-line { stroke: var(--pin-accentBar, #4C8DFF); stroke-width: 2.4; }
+  .pin-tooltip { position: fixed; z-index: 10; pointer-events: none; padding: 4px 8px; border-radius: 6px; font-size: 12px; color: var(--pin-text, #E6EDF3); background: var(--pin-neutralFill, #161B24); border: 1px solid var(--pin-neutralStroke, #252C38); box-shadow: 0 4px 14px rgba(0,0,0,.35); }
+  .pin-tooltip b { color: var(--pin-accentBar, #4C8DFF); }
+  .pin-tooltip .pin-ref { display: block; margin-top: 3px; color: var(--pin-textMuted, #7A8699); font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
+  .pin-backdrop { position: fixed; inset: 0; z-index: 8; padding: 24px; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.55); }
+  .pin-backdrop[hidden] { display: none; }
+  .pin-inspector { width: 680px; max-width: 92vw; max-height: 82vh; overflow: auto; padding: 20px 24px 24px; background: var(--pin-bg1, #0F141D); border: 1px solid var(--pin-neutralStroke, #252C38); border-radius: 14px; box-shadow: 0 24px 64px rgba(0,0,0,.5); }
+  .pin-close { float: right; font-size: 22px; line-height: 1; cursor: pointer; color: var(--pin-textMuted, #7A8699); background: none; border: 0; }
+  .pin-inspector h2 { margin: 0 0 2px; font-size: 18px; word-break: break-all; }
+  .pin-inspector .pin-sub { color: var(--pin-textFaint, #8A93A3); font-size: 12.5px; margin-bottom: 16px; }
+  .pin-inspector .pin-section { margin: 18px 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--pin-textFaint, #8A93A3); }
+  .pin-attrs { display: flex; flex-direction: column; gap: 10px; }
+  .pin-attr .k { color: var(--pin-textFaint, #8A93A3); font-size: 11.5px; word-break: break-all; }
+  .pin-attr .v { margin-top: 1px; color: var(--pin-textMuted, #7A8699); font-size: 12.5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; white-space: pre-wrap; }
+  .pin-attr .v.ref { color: var(--pin-accentBar, #4C8DFF); }
+</style>`;
+
+const CONTAIN_JS = String.raw`
+const root = document.documentElement;
+const stage = document.getElementById("pin-stage");
+const tip = document.getElementById("pin-tooltip");
+const boxLayer = document.getElementById("pin-boxes");
+const edgeLayer = document.getElementById("pin-edges");
+const backdrop = document.getElementById("pin-backdrop");
+const inspectorBody = document.getElementById("pin-inspector-body");
+const cnodes = {};
+stage.querySelectorAll(".pin-cnode").forEach((el) => { cnodes[el.getAttribute("data-node-id")] = el; });
+let cur = -1;
+
+document.getElementById("pin-theme-select").addEventListener("change", (e) => {
+  const t = THEMES[e.target.value]; if (!t) return;
+  for (const k in t) root.style.setProperty("--pin-" + k, t[k]);
+});
+
+function applyState(i, instant) {
+  const s = STATES[i]; if (!s) return;
+  cur = i;
+  boxLayer.innerHTML = s.boxes;
+  edgeLayer.innerHTML = s.edges;
+  for (const id in cnodes) {
+    const g = cnodes[id];
+    if (instant) g.classList.add("pin-instant");
+    const p = s.pos[id];
+    if (p) { g.style.transform = "translate(" + p.x + "px," + p.y + "px)"; g.style.opacity = (META[id] && isPlumbing(id)) ? "0.6" : "1"; }
+    else { g.style.opacity = "0"; }
+    if (instant) requestAnimationFrame(() => g.classList.remove("pin-instant"));
+  }
+}
+function isPlumbing(id) { return !(id in EXPAND) && STATES[0].pos[id] === undefined && true; }
+
+function nodeFrom(t) { return t && t.closest ? t.closest("[data-node-id]") : null; }
+function edgeFrom(t) { return t && t.closest ? t.closest("[data-edge-from]") : null; }
+
+stage.addEventListener("click", (e) => {
+  const ed = edgeFrom(e.target);
+  if (ed) { openInspector(edgeBody(ed)); return; }
+  const nd = nodeFrom(e.target);
+  if (!nd) return;
+  const id = nd.getAttribute("data-node-id");
+  if (id in EXPAND) { applyState(cur === EXPAND[id] ? 0 : EXPAND[id], false); return; }
+  if (META[id]) openInspector(nodeBody(id, META[id]));
+});
+
+stage.addEventListener("mousemove", (e) => {
+  const nd = nodeFrom(e.target);
+  if (nd && (!cnodes[nd.getAttribute("data-node-id")] || cnodes[nd.getAttribute("data-node-id")].style.opacity !== "0")) {
+    const id = nd.getAttribute("data-node-id"); const m = META[id];
+    tip.innerHTML = m ? "<b>" + esc(id) + "</b> · " + esc(m.kind) : "<b>" + esc(id) + "</b>";
+    return tipAt(e);
+  }
+  const ed = edgeFrom(e.target);
+  if (ed) {
+    const from = ed.getAttribute("data-edge-from"), to = ed.getAttribute("data-edge-to"), via = ed.getAttribute("data-edge-via"), ta = ed.getAttribute("data-edge-to-attr");
+    tip.innerHTML = "<b>" + esc(from) + "</b>" + (via ? "." + esc(via) : "") + " &rarr; <b>" + esc(to) + "</b>" + (ta ? "." + esc(ta) : "") + "<span class='pin-ref'>" + esc(refValue(from, via, to, ta)) + "</span>";
+    return tipAt(e);
+  }
+  tip.hidden = true;
+});
+stage.addEventListener("mouseleave", () => { tip.hidden = true; });
+function tipAt(e) { tip.hidden = false; tip.style.left = (e.clientX + 14) + "px"; tip.style.top = (e.clientY + 14) + "px"; }
+
+function refValue(from, via, to, toAttr) {
+  if (toAttr) return to + "." + toAttr;
+  const n = META[from]; const val = n && n.attrs && via ? n.attrs[via] : null;
+  const pick = (x) => (x && typeof x === "object" && "$ref" in x ? x["$ref"] : null);
+  if (Array.isArray(val)) { for (const it of val) { const r = pick(it); if (r && r.indexOf(to + ".") === 0) return r; } }
+  return pick(val) || to;
+}
+function openInspector(html) { inspectorBody.innerHTML = html; backdrop.hidden = false; }
+document.getElementById("pin-close").addEventListener("click", () => { backdrop.hidden = true; });
+backdrop.addEventListener("click", (e) => { if (e.target === backdrop) backdrop.hidden = true; });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") backdrop.hidden = true; });
+
+function nodeBody(id, m) {
+  let h = "<h2>" + esc(id) + "</h2><div class='pin-sub'>" + esc(m.kind) + " · " + esc(m.lexicon) + "</div>";
+  const attrs = m.attrs || {}; const keys = Object.keys(attrs);
+  if (keys.length) h += "<div class='pin-section'>attributes</div><div class='pin-attrs'>" + keys.map((k) => attrRow(k, attrs[k])).join("") + "</div>";
+  return h;
+}
+function edgeBody(ed) {
+  const from = ed.getAttribute("data-edge-from"), to = ed.getAttribute("data-edge-to"), via = ed.getAttribute("data-edge-via"), ta = ed.getAttribute("data-edge-to-attr");
+  const k = (m) => (m ? " · " + m.kind : "");
+  return "<h2>" + esc(from) + " &rarr; " + esc(to) + "</h2><div class='pin-sub'>reference</div><div class='pin-attrs'>" +
+    attrRow("consumer", from + k(META[from])) + attrRow("via", via || "—") + attrRow("producer", to + k(META[to])) + attrRow("ref", refValue(from, via, to, ta)) + "</div>";
+}
+function attrRow(key, value) {
+  const ref = value && typeof value === "object" && "$ref" in value;
+  return "<div class='pin-attr'><div class='k'>" + esc(key) + "</div><div class='" + (ref ? "v ref" : "v") + "'>" + esc(fmt(value)) + "</div></div>";
+}
+function fmt(v) { if (v == null) return String(v); if (typeof v === "object") return "$ref" in v ? "→ " + v["$ref"] : JSON.stringify(v); return String(v); }
+function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+
+applyState(0, true);
+`;

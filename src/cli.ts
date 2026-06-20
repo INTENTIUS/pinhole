@@ -4,7 +4,7 @@ import { getTheme } from "./theme.ts";
 import { renderSvg, cardSizes } from "./paint/render.ts";
 import { renderHtml } from "./html.ts";
 import { renderMorphHtml, type MorphView } from "./morph.ts";
-import { renderContainment, containmentNotes } from "./containment.ts";
+import { renderContainment, renderContainmentApp } from "./containment.ts";
 
 const USAGE = `pinhole — agentic infra diagrammer
 
@@ -110,23 +110,33 @@ async function runRender(args: string[]): Promise<number> {
       return 0;
     }
 
-    // IR first so we can measure each node's card; then lay out with those sizes
-    // (same options, so the IR and layout node sets line up) and paint.
     const ir = await graphIr(dir, opts);
-    // Containment view does its own salience filter + nested-box layout (no chant
-    // layout needed); everything else goes through chant's size-aware layout.
-    const svg = containment
-      ? renderContainment(ir, { title, theme })
-      : renderSvg(ir, await graphLayout(dir, opts, cardSizes(ir, { style })), {
-          title,
-          theme,
-          tier,
-          style,
-          animate: { pulse, flow },
-        });
+
+    // Containment does its own salience filter + nested-box layout (no chant
+    // layout). --html gets the interactive expand artifact; -o gets a static SVG.
+    if (containment) {
+      if (html) {
+        await writeFile(html, renderContainmentApp(ir, { title, theme }));
+        process.stderr.write(`pinhole: wrote ${html}\n`);
+      }
+      if (out) {
+        await writeFile(out, renderContainment(ir, { title, theme }));
+        process.stderr.write(`pinhole: wrote ${out}\n`);
+      }
+      if (!out && !html) process.stdout.write(renderContainment(ir, { title, theme }));
+      return 0;
+    }
+
+    // Otherwise measure each node's card, lay out with those sizes, and paint.
+    const svg = renderSvg(ir, await graphLayout(dir, opts, cardSizes(ir, { style })), {
+      title,
+      theme,
+      tier,
+      style,
+      animate: { pulse, flow },
+    });
     if (html) {
-      const notes = containment ? containmentNotes(ir) : undefined;
-      await writeFile(html, renderHtml(ir, svg, { title, theme, notes }));
+      await writeFile(html, renderHtml(ir, svg, { title, theme }));
       process.stderr.write(`pinhole: wrote ${html}\n`);
     }
     if (out) {

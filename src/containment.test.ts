@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { roleForKind, renderContainment, containmentNotes } from "./containment.ts";
+import { roleForKind, renderContainment, containmentNotes, renderContainmentApp } from "./containment.ts";
 import type { GraphIR } from "./ir.ts";
 
 describe("roleForKind", () => {
@@ -72,6 +72,33 @@ describe("renderContainment", () => {
     const notes = containmentNotes(ir);
     expect(notes.vpc).toContainEqual({ label: "contains", value: expect.stringContaining("subnet") });
     expect(notes.vpc).toContainEqual({ label: "hides", value: "routeTable" });
+  });
+});
+
+describe("renderContainmentApp (interactive expand)", () => {
+  const app = renderContainmentApp(ir, { title: "T" });
+
+  it("is a self-contained offline document with the expand engine", () => {
+    expect(app.startsWith("<!DOCTYPE html>")).toBe(true);
+    expect(app).not.toContain("src=");
+    expect(app).toContain("function applyState");
+  });
+
+  it("makes the VPC expandable (it hides plumbing) and reveals it on expand", () => {
+    const script = app.match(/<script>([\s\S]*?)<\/script>/)![1].replace(/\\u003c/g, "<");
+    const STATES = JSON.parse(script.match(/const STATES = (\[[\s\S]*?\]);\n/)![1]);
+    const EXPAND = JSON.parse(script.match(/const EXPAND = (\{[\s\S]*?\});\n/)![1]);
+    expect("vpc" in EXPAND).toBe(true);
+    // routeTable is hidden in the collapsed state, present once the VPC expands
+    expect(STATES[0].pos.routeTable).toBeUndefined();
+    expect(STATES[EXPAND.vpc].pos.routeTable).toBeDefined();
+    // the plumbing leaf is drawn (once) as a movable badge
+    expect(app).toContain('data-node-id="routeTable"');
+  });
+
+  it("ships a syntactically valid viewer", () => {
+    const script = app.match(/<script>([\s\S]*?)<\/script>/)![1].replace(/\\u003c/g, "<");
+    expect(() => new Function(script)).not.toThrow();
   });
 
   it("floats a node with no lives-in parent at the top level", () => {
