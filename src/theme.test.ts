@@ -18,6 +18,14 @@ describe("themes", () => {
   it("getTheme throws on an unknown name", () => {
     expect(() => getTheme("neon")).toThrow(/unknown theme/);
   });
+
+  it("ships an aws theme in the brand palette (squid ink + orange)", () => {
+    const aws = getTheme("aws");
+    expect(aws.tokens.bg1).toBe("#232F3E"); // Squid Ink
+    expect(aws.tokens.accentBar).toBe("#FF9900"); // AWS orange
+    expect(aws.tokens.neutralBar).toBe("#FF9900"); // orange bar on every card
+    expect(aws.tokens.selectedStroke).toBe("#FF9900");
+  });
 });
 
 describe("v (themed color reference)", () => {

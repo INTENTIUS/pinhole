@@ -83,7 +83,25 @@ const blueprint: Theme = {
   },
 };
 
-export const THEMES: Record<string, Theme> = { dark, light, blueprint };
+// AWS brand palette: Squid Ink navy (#232F3E) ground, white text, and the
+// signature AWS orange (#FF9900) — here as the accent bar on every card and the
+// selection/accent colour, the way AWS architecture diagrams read. Status greens
+// /reds follow AWS's architecture-icon category colours.
+const aws: Theme = {
+  name: "aws",
+  tokens: {
+    bg0: "#1B2532", bg1: "#232F3E", dots: "#33425A",
+    text: "#FFFFFF", textMuted: "#C2CBD6", textFaint: "#94A2B5",
+    edge: "#5E7187",
+    neutralFill: "#2A3849", neutralStroke: "#3C4D63", neutralBar: "#FF9900",
+    accentFill: "#243142", accentStroke: "#FF9900", accentBar: "#FF9900",
+    goodFill: "#16331F", goodStroke: "#1F7A3D", goodBar: "#56C271",
+    warnFill: "#3A1E18", warnStroke: "#D13212", warnBar: "#FF6B47",
+    selectedStroke: "#FF9900",
+  },
+};
+
+export const THEMES: Record<string, Theme> = { dark, light, blueprint, aws };
 export const DEFAULT_THEME = "dark";
 
 /** Resolve a theme by name. Throws on an unknown name (with the valid list). */

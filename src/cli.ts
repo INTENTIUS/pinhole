@@ -11,7 +11,7 @@ Usage:
                                [--theme <name>] [--rich] [--icon]
                                [--detail 0..3] [--lens <kind>:<target>] [--up] [--down]
 
-Themes: dark (default), light, blueprint.
+Themes: dark (default), light, blueprint, aws.
 --rich emits foreignObject HTML labels (browser/inline only); default is portable
 native-SVG text that works as a static image and on GitHub.
 --icon draws each node as a compact glyph + a truncated label (dense graphs);
