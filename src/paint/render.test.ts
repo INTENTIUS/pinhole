@@ -34,7 +34,7 @@ describe("renderSvg animation", () => {
 
   it("animates edge flow when requested", () => {
     const svg = renderSvg(ir, layout, { animate: { flow: true } });
-    expect(svg).toContain('class="pin-flow"');
+    expect(svg).toMatch(/class="pin-edge-line pin-flow"/);
   });
 
   it("always ships the reduced-motion-guarded keyframes", () => {
@@ -47,6 +47,21 @@ describe("renderSvg animation", () => {
   it("portable output never contains foreignObject", () => {
     const svg = renderSvg(ir, layout, { animate: { pulse: ["vpc"], flow: true } });
     expect(svg).not.toContain("foreignObject");
+  });
+});
+
+describe("renderSvg edge hooks (relationship rollover)", () => {
+  it("stamps each edge with its reference (from/to/via) for rollover", () => {
+    const svg = renderSvg(ir, layout);
+    expect(svg).toContain('data-edge-from="subnet"');
+    expect(svg).toContain('data-edge-to="vpc"');
+    expect(svg).toContain('data-edge-via="network"');
+  });
+
+  it("gives each edge a transparent wide hit-path so thin lines are hoverable", () => {
+    const svg = renderSvg(ir, layout);
+    expect(svg).toContain('stroke="transparent"');
+    expect(svg).toContain('pointer-events="stroke"');
   });
 });
 

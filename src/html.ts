@@ -117,8 +117,11 @@ const PAGE_CSS = `<style>
   }
   .pin-stage { padding: 16px; }
   .pin-stage svg { max-width: 100%; height: auto; display: block; }
-  .pin-stage [data-node-id] { cursor: pointer; }
+  .pin-stage [data-node-id], .pin-stage [data-edge-from] { cursor: pointer; }
   .pin-stage .pin-sel { filter: drop-shadow(0 0 6px var(--pin-accentBar, #4C8DFF)); }
+  /* edge rollover: brighten the line, glow its two endpoint nodes */
+  .pin-stage [data-edge-from]:hover .pin-edge-line { stroke: var(--pin-accentBar, #4C8DFF); stroke-width: 2.4; }
+  .pin-stage .pin-edge-node { filter: drop-shadow(0 0 5px var(--pin-accentBar, #4C8DFF)); }
   .pin-tooltip {
     position: fixed; z-index: 10; pointer-events: none;
     padding: 4px 8px; border-radius: 6px; font-size: 12px;
@@ -128,6 +131,8 @@ const PAGE_CSS = `<style>
     box-shadow: 0 4px 14px rgba(0,0,0,.35);
   }
   .pin-tooltip b { color: var(--pin-accentBar, #4C8DFF); }
+  .pin-tooltip .pin-ref { display: block; margin-top: 3px; color: var(--pin-textMuted, #7A8699);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
   /* A centered, wide modal — long AWS names/ARNs need the room a side rail can't give. */
   .pin-backdrop {
     position: fixed; inset: 0; z-index: 8; padding: 24px;
@@ -180,23 +185,74 @@ function applyTheme(name) {
 }
 document.getElementById("pin-theme-select").addEventListener("change", (e) => applyTheme(e.target.value));
 
-// --- node lookup from an event target ---
+// --- lookups from an event target ---
 function nodeElFrom(target) {
   return target && target.closest ? target.closest("[data-node-id]") : null;
 }
+function edgeElFrom(target) {
+  return target && target.closest ? target.closest("[data-edge-from]") : null;
+}
 
-// --- hover tooltip ---
-stage.addEventListener("mousemove", (e) => {
-  const el = nodeElFrom(e.target);
-  if (!el) { tip.hidden = true; return; }
-  const node = NODES[el.getAttribute("data-node-id")];
-  if (!node) { tip.hidden = true; return; }
-  tip.innerHTML = "<b>" + escapeHtml(node.id) + "</b> · " + escapeHtml(node.kind);
+// --- hover tooltip: nodes, and edges (the relationship + its ref value) ---
+let litNodes = [];
+function clearEdgeHighlight() {
+  litNodes.forEach((el) => el.classList.remove("pin-edge-node"));
+  litNodes = [];
+}
+function placeTip(e) {
   tip.hidden = false;
   tip.style.left = (e.clientX + 14) + "px";
   tip.style.top = (e.clientY + 14) + "px";
+}
+// the exact $ref a consumer attr holds, e.g. "vpc.VpcId" — the producer attribute
+// the relationship actually flows through.
+function refValue(from, via, to, toAttr) {
+  if (toAttr) return to + "." + toAttr;
+  const node = NODES[from];
+  const v = node && node.attrs && via ? node.attrs[via] : null;
+  const pick = (x) => (x && typeof x === "object" && "$ref" in x ? x["$ref"] : null);
+  if (Array.isArray(v)) {
+    for (const it of v) { const r = pick(it); if (r && r.indexOf(to + ".") === 0) return r; }
+  }
+  return pick(v) || to;
+}
+function highlightEndpoints(g) {
+  clearEdgeHighlight();
+  for (const id of [g.getAttribute("data-edge-from"), g.getAttribute("data-edge-to")]) {
+    const el = stage.querySelector('[data-node-id="' + (id || "").replace(/"/g, '\\"') + '"]');
+    if (el) { el.classList.add("pin-edge-node"); litNodes.push(el); }
+  }
+}
+stage.addEventListener("mousemove", (e) => {
+  const nodeEl = nodeElFrom(e.target);
+  if (nodeEl) {
+    const node = NODES[nodeEl.getAttribute("data-node-id")];
+    if (node) {
+      tip.innerHTML = "<b>" + escapeHtml(node.id) + "</b> · " + escapeHtml(node.kind);
+      placeTip(e);
+      clearEdgeHighlight();
+      return;
+    }
+  }
+  const edgeEl = edgeElFrom(e.target);
+  if (edgeEl) {
+    const from = edgeEl.getAttribute("data-edge-from");
+    const to = edgeEl.getAttribute("data-edge-to");
+    const via = edgeEl.getAttribute("data-edge-via");
+    const toAttr = edgeEl.getAttribute("data-edge-to-attr");
+    let html = "<b>" + escapeHtml(from) + "</b>" + (via ? "." + escapeHtml(via) : "") +
+      " &rarr; <b>" + escapeHtml(to) + "</b>" + (toAttr ? "." + escapeHtml(toAttr) : "");
+    const ref = refValue(from, via, to, toAttr);
+    if (ref) html += "<span class='pin-ref'>" + escapeHtml(ref) + "</span>";
+    tip.innerHTML = html;
+    placeTip(e);
+    highlightEndpoints(edgeEl);
+    return;
+  }
+  tip.hidden = true;
+  clearEdgeHighlight();
 });
-stage.addEventListener("mouseleave", () => { tip.hidden = true; });
+stage.addEventListener("mouseleave", () => { tip.hidden = true; clearEdgeHighlight(); });
 
 // --- click inspector ---
 let selected = null;

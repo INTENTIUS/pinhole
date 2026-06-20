@@ -65,6 +65,16 @@ describe("renderHtml", () => {
     expect(html).toContain('data-node-id="vpc"');
   });
 
+  it("wires edge rollovers: relationship hooks + ref resolution", () => {
+    // the inlined SVG carries the edge's reference …
+    expect(html).toContain('data-edge-from="subnet"');
+    expect(html).toContain('data-edge-to="vpc"');
+    expect(html).toContain("data-edge-via");
+    // … and the viewer resolves the exact $ref the consumer attr holds
+    expect(html).toContain("function refValue");
+    expect(html).toContain("class='pin-ref'");
+  });
+
   it("renders the inspector as a centered modal dismissable by backdrop and Escape", () => {
     expect(html).toContain('id="pin-backdrop"');
     expect(html).toContain('role="dialog"');

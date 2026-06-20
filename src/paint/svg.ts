@@ -14,6 +14,15 @@ import type { Field } from "../labels.ts";
 /** Drives the color of a node card. */
 export type Status = "neutral" | "accent" | "good" | "warn" | "selected";
 
+/** The reference an edge encodes — `from` references `to` through `via` (and, at
+ * detail T3, the producer attribute `toAttr`). Stamped onto the edge for rollover. */
+export interface EdgeRel {
+  from: string;
+  to: string;
+  via?: string;
+  toAttr?: string;
+}
+
 interface StatusTokens {
   fill: ThemeTokenName;
   stroke: ThemeTokenName;
@@ -190,11 +199,27 @@ export class Canvas {
     );
   }
 
-  /** A bezier path between two points, in the theme's edge color. With `flow`,
-   * a marching dash animates direction along the edge. */
-  edge(d: string, width: number, flow = false): void {
-    const cls = flow ? ` class="pin-flow"` : "";
-    this.body += `<path d="${esc(d)}" fill="none" stroke="${this.c("edge")}" stroke-width="${width}" stroke-linecap="round"${cls}/>`;
+  /** A bezier path between two points, in the theme's edge color. With `flow`, a
+   * marching dash animates direction. With `rel` (the reference this edge
+   * encodes), the path is wrapped in a group carrying `data-edge-*` hooks and an
+   * invisible wide hit-path, so the interactive artifact can roll over a thin
+   * edge to show the relationship + ref value. */
+  edge(d: string, width: number, flow = false, rel?: EdgeRel): void {
+    const lineCls = flow ? ` class="pin-edge-line pin-flow"` : ` class="pin-edge-line"`;
+    const line = `<path${lineCls} d="${esc(d)}" fill="none" stroke="${this.c("edge")}" stroke-width="${width}" stroke-linecap="round"/>`;
+    if (!rel) {
+      this.body += line;
+      return;
+    }
+    const attrs =
+      ` data-edge-from="${esc(rel.from)}" data-edge-to="${esc(rel.to)}"` +
+      (rel.via ? ` data-edge-via="${esc(rel.via)}"` : "") +
+      (rel.toAttr ? ` data-edge-to-attr="${esc(rel.toAttr)}"` : "");
+    // The hit-path is transparent but `pointer-events="stroke"` makes its full
+    // width hoverable — a 1.4px line is otherwise near-impossible to hit.
+    this.body +=
+      `<g${attrs}>${line}` +
+      `<path d="${esc(d)}" fill="none" stroke="transparent" stroke-width="14" stroke-linecap="round" pointer-events="stroke"/></g>`;
   }
 
   toString(): string {

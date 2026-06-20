@@ -98,7 +98,12 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
     const a = place(e.from);
     const b = place(e.to);
     if (!a || !b) continue;
-    c.edge(`M ${a.cx} ${a.cy} C ${a.cx} ${(a.cy + b.cy) / 2}, ${b.cx} ${(a.cy + b.cy) / 2}, ${b.cx} ${b.cy}`, 1.4, flow);
+    c.edge(`M ${a.cx} ${a.cy} C ${a.cx} ${(a.cy + b.cy) / 2}, ${b.cx} ${(a.cy + b.cy) / 2}, ${b.cx} ${b.cy}`, 1.4, flow, {
+      from: e.from,
+      to: e.to,
+      via: e.viaAttr,
+      toAttr: e.toAttr,
+    });
   }
 
   for (const node of ir.nodes) {
