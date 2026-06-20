@@ -65,6 +65,8 @@ const LEAF_H = 86;
 const PAD = 16;
 const BOX_TITLE = 30;
 const GAP = 18;
+const MIN_ASPECT = 0.32; // grow a box's height toward this fraction of its width…
+const MIN_ASPECT_PAD = 44; // …but add at most this much padding on each side.
 
 export interface ContainmentOptions {
   title?: string;
@@ -79,7 +81,7 @@ interface Layout {
   X: Record<string, number>;
   Y: Record<string, number>;
   /** Row-packing per box: each row's y offset and its children's x offsets. */
-  pack: Record<string, Array<{ y: number; items: Array<{ id: string; x: number }> }>>;
+  pack: Record<string, Array<{ y: number; items: Array<{ id: string; x: number; dy: number }> }>>;
 }
 
 const uniq = (xs: string[]): string[] => [...new Set(xs)];
@@ -312,14 +314,15 @@ function computeLayout(
     const widest = Math.max(...ch.map((c) => L.W[c]));
     const avg = ch.reduce((s, c) => s + L.W[c], 0) / ch.length;
     const target = Math.max(widest, Math.ceil(Math.sqrt(ch.length)) * (avg + GAP));
-    const pack: Array<{ y: number; items: Array<{ id: string; x: number }> }> = [];
-    let row: Array<{ id: string; x: number }> = [];
+    const pack: Array<{ y: number; items: Array<{ id: string; x: number; dy: number }> }> = [];
+    let row: Array<{ id: string; x: number; dy: number }> = [];
     let rowW = PAD;
     let y = BOX_TITLE + PAD;
     let maxRowW = 0;
     const flush = (): void => {
       if (!row.length) return;
       const rh = Math.max(...row.map((it) => L.H[it.id]));
+      for (const it of row) it.dy = (rh - L.H[it.id]) / 2; // centre shorter items in the row band
       pack.push({ y, items: row });
       maxRowW = Math.max(maxRowW, rowW - GAP + PAD);
       y += rh + GAP;
@@ -328,18 +331,26 @@ function computeLayout(
     };
     for (const c of ch) {
       if (row.length && rowW + L.W[c] > target + PAD) flush();
-      row.push({ id: c, x: rowW });
+      row.push({ id: c, x: rowW, dy: 0 });
       rowW += L.W[c] + GAP;
     }
     flush();
     L.W[id] = Math.max(maxRowW, BOX_TITLE);
-    L.H[id] = y - GAP + PAD;
+    let h = y - GAP + PAD;
+    // Grow a very wide/short box toward a minimum aspect so it reads as a panel,
+    // not a letterbox — distribute the slack as top/bottom padding (capped).
+    const slack = Math.min((L.W[id] * MIN_ASPECT - h) / 2, MIN_ASPECT_PAD);
+    if (slack > 0) {
+      for (const r of pack) r.y += slack;
+      h += slack * 2;
+    }
+    L.H[id] = h;
     L.pack[id] = pack;
   };
   const place = (id: string, x: number, y: number): void => {
     L.X[id] = x;
     L.Y[id] = y;
-    for (const r of L.pack[id] ?? []) for (const it of r.items) place(it.id, x + it.x, y + r.y);
+    for (const r of L.pack[id] ?? []) for (const it of r.items) place(it.id, x + it.x, y + r.y + it.dy);
   };
   roots.forEach(size);
   let rx = MARGIN;
@@ -364,7 +375,7 @@ export function renderContainment(ir: GraphIR, opts: ContainmentOptions = {}): s
   let boxes = "";
   let badges = "";
   const walk = (id: string): void => {
-    if (isBox(id, children, role)) boxes += box(id, L, role[id], meta[id], theme);
+    if (isBox(id, children, role)) boxes += box(id, L, role[id], meta[id], theme, subtitleFor(id, ir));
     else badges += badge(id, L, role[id], meta[id], theme, focus);
     (children[id] ?? []).forEach(walk);
   };
@@ -395,6 +406,33 @@ export function renderContainment(ir: GraphIR, opts: ContainmentOptions = {}): s
 
 /** A place/container box: rounded rect, a title row with its glyph (and an
  * optional info-bar subtitle, e.g. a VPC's CIDR), children drawn over it. */
+/** Distinct AZs across the IR's subnets — a VPC-level "spread" stat. */
+function azCount(ir: GraphIR): number {
+  const s = new Set<string>();
+  for (const n of ir.nodes) {
+    const z = (n.attrs as Record<string, unknown> | undefined)?.AvailabilityZone;
+    if (/subnet/i.test(n.kind) && typeof z === "string") s.add(z);
+  }
+  return s.size;
+}
+
+/** An enriched place subtitle: CIDR, own AZ, AZ spread (for a VPC), region —
+ * whatever the attrs provide, beyond the bare CIDR. */
+export function subtitleFor(id: string, ir: GraphIR): string | undefined {
+  const n = ir.nodes.find((x) => x.id === id);
+  if (!n) return undefined;
+  const a = (n.attrs ?? {}) as Record<string, unknown>;
+  const parts: string[] = [];
+  const cidr = a.CidrBlock ?? a.cidr;
+  if (typeof cidr === "string") parts.push(cidr);
+  const az = a.AvailabilityZone ?? a.availabilityZone;
+  if (typeof az === "string") parts.push(az);
+  if (/vpc|vnet/i.test(n.kind)) { const c = azCount(ir); if (c > 1) parts.push(`${c} AZs`); }
+  const region = a.Region ?? a.region;
+  if (typeof region === "string") parts.push(region);
+  return parts.length ? parts.join(" · ") : undefined;
+}
+
 function box(id: string, L: Layout, role: Role, m: { kind: string; lexicon: string }, theme: Theme, subtitle?: string): string {
   const x = L.X[id];
   const y = L.Y[id];
@@ -606,12 +644,7 @@ export function renderContainmentApp(ir: GraphIR, opts: ContainmentOptions = {})
   const variants = focus === "security"
     ? [analyze(ir, "security"), analyze(ir, "network")]
     : [analyze(ir, "app"), analyze(ir, "network")];
-  const attrs: Record<string, Record<string, unknown>> = {};
-  for (const n of ir.nodes) attrs[n.id] = n.attrs;
-  const subtitleOf = (id: string): string | undefined => {
-    const c = attrs[id]?.CidrBlock ?? attrs[id]?.cidr;
-    return typeof c === "string" ? c : undefined;
-  };
+  const subtitleOf = (id: string): string | undefined => subtitleFor(id, ir);
   const center = (L: Layout, id: string) => ({ x: Math.round(L.X[id] + L.W[id] / 2), y: Math.round(L.Y[id] + L.H[id] / 2) });
 
   // Pass 1 — lay out each variant; collect which ids are boxes vs leaves anywhere.
