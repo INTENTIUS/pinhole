@@ -332,6 +332,19 @@ describe("renderContainmentApp (interactive expand)", () => {
     expect(() => new Function(script)).not.toThrow();
   });
 
+  it("offers per-box drill-down: lists what each box collapsed (#38 item 1)", () => {
+    const script = app.match(/<script>([\s\S]*?)<\/script>/)![1].replace(/\\u003c/g, "<");
+    const DRILL = JSON.parse(script.match(/const DRILL = (\{[\s\S]*?\});\n/)![1]);
+    const vpcHidden = (DRILL.vpc ?? []).map((d: { id: string }) => d.id);
+    // the VPC's collapsed plumbing is reachable from its inspector
+    expect(vpcHidden).toContain("subnet");
+    expect(vpcHidden).toContain("routeTable");
+    expect(vpcHidden).toContain("sg");
+    // each entry carries the kind, and the inspector renders the section
+    expect((DRILL.vpc ?? [])[0]).toHaveProperty("kind");
+    expect(app).toContain("DRILL[id]");
+  });
+
   it("polishes inspector values: pretty JSON + per-value scroll + copy buttons", () => {
     expect(app).toContain("JSON.stringify(v, null, 2)");
     expect(app).toContain("class='pin-copy'");

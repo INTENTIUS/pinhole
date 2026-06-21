@@ -714,6 +714,18 @@ export function renderContainmentApp(ir: GraphIR, opts: ContainmentOptions = {})
   const META: Record<string, { kind: string; lexicon: string; attrs: unknown }> = {};
   for (const n of ir.nodes) META[n.id] = { kind: n.kind, lexicon: n.lexicon, attrs: n.attrs };
 
+  // Per-box drill-down: what each box collapsed (its hidden plumbing/glue), so a
+  // click can reveal it. Merge the hidden sets across states — a node revealed as
+  // a structured box in the network view is still "collapsed" from the app view,
+  // and the composite boxes' glue (a listener, an SG) is collapsed in every view.
+  const drill: Record<string, Array<{ id: string; kind: string }>> = {};
+  for (const a of variants) {
+    for (const [place, ids] of Object.entries(a.hidden)) {
+      const seen = new Set((drill[place] ??= []).map((d) => d.id));
+      for (const hid of ids) if (!seen.has(hid)) { drill[place].push({ id: hid, kind: META[hid]?.kind ?? "" }); seen.add(hid); }
+    }
+  }
+
   const themeOptions = Object.keys(THEMES).map((n) => `<option value="${esc(n)}"${n === theme.name ? " selected" : ""}>${esc(n)}</option>`).join("");
 
   const svg =
@@ -736,7 +748,7 @@ ${CONTAIN_CSS}
 <body>
 <header class="pin-bar">
   <h1>${esc(title)}</h1>
-  <span class="pin-hint">click the VPC to switch between app and network views</span>
+  <span class="pin-hint">click the VPC to switch app/network · click any box to see what it collapsed</span>
   <label class="pin-theme">theme <select id="pin-theme-select">${themeOptions}</select></label>
 </header>
 <main class="pin-stage" id="pin-stage">${svg}</main>
@@ -752,6 +764,7 @@ const THEMES = ${jsonScriptC(Object.fromEntries(Object.entries(THEMES).map(([k, 
 const STATES = ${jsonScriptC(stateMeta)};
 const EXPAND = ${jsonScriptC(expandIndex)};
 const META = ${jsonScriptC(META)};
+const DRILL = ${jsonScriptC(drill)};
 const START = ${startState};
 ${CONTAIN_JS}
 </script>
@@ -796,6 +809,10 @@ const CONTAIN_CSS = `<style>
   .pin-copy { flex: none; cursor: pointer; background: none; border: 1px solid var(--pin-neutralStroke, #252C38); border-radius: 5px; color: var(--pin-textFaint, #8A93A3); font-size: 10px; padding: 1px 6px; }
   .pin-copy:hover { color: var(--pin-textMuted, #7A8699); }
   .pin-copy.copied { color: var(--pin-accentBar, #4C8DFF); border-color: var(--pin-accentBar, #4C8DFF); }
+  .pin-drill { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; max-height: 220px; overflow: auto; }
+  .pin-drill li { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; padding: 4px 8px; border-radius: 6px; background: var(--pin-neutralFill, #1A2230); }
+  .pin-drill .pin-did { color: var(--pin-textMuted, #7A8699); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .pin-drill .pin-dk { color: var(--pin-textFaint, #8A93A3); white-space: nowrap; }
 </style>`;
 
 const CONTAIN_JS = String.raw`
@@ -880,6 +897,13 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") backdrop.h
 
 function nodeBody(id, m) {
   let h = "<h2>" + esc(id) + "</h2><div class='pin-sub'>" + esc(m.kind) + " · " + esc(m.lexicon) + "</div>";
+  // Drill-down: what this box collapsed (silenced plumbing/glue), with kinds.
+  const drill = DRILL[id];
+  if (drill && drill.length) {
+    const isVpc = EXPAND[id] != null;
+    h += "<div class='pin-section'>collapsed · " + drill.length + (isVpc ? " (click the box to reveal the network)" : "") + "</div>";
+    h += "<ul class='pin-drill'>" + drill.map((d) => "<li><span class='pin-did'>" + esc(d.id) + "</span><span class='pin-dk'>" + esc(d.kind) + "</span></li>").join("") + "</ul>";
+  }
   const attrs = m.attrs || {}; const keys = Object.keys(attrs);
   if (keys.length) h += "<div class='pin-section'>attributes</div><div class='pin-attrs'>" + keys.map((k) => attrRow(k, attrs[k])).join("") + "</div>";
   return h;
