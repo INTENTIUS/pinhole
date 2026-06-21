@@ -377,3 +377,38 @@ describe("renderContainmentApp (interactive expand)", () => {
     expect(inside(assets, vpc)).toBe(false);
   });
 });
+
+describe("byStack boundary boxes (#42 / chant#513 phase 1)", () => {
+  const multi: GraphIR = {
+    nodes: [
+      { id: "vpc", kind: "AWS::EC2::VPC", lexicon: "aws", attrs: {} },
+      { id: "web", kind: "AWS::EC2::Instance", lexicon: "aws", attrs: {} },
+      { id: "ci", kind: "GitLab::CI::Job", lexicon: "gitlab", attrs: {} },
+    ],
+    edges: [{ from: "web", to: "vpc", kind: "ref", viaAttr: "VpcId" }],
+    groups: { byStack: { aws: ["vpc", "web"], gitlab: ["ci"] } },
+  };
+
+  it("wraps each stack's resources in a labelled boundary box", () => {
+    const s = renderContainment(multi, {});
+    expect(s).toContain('data-node-id="stack·aws"');
+    expect(s).toContain('data-node-id="stack·gitlab"');
+  });
+
+  it("nests each resource inside its own stack box (stacks side by side)", () => {
+    const s = renderContainment(multi, {});
+    const rect = (id: string) => {
+      const m = s.match(new RegExp(`<g data-node-id="${id}"><rect x="([\\d.]+)" y="([\\d.]+)" width="([\\d.]+)" height="([\\d.]+)"`));
+      return m ? { x: +m[1], y: +m[2], w: +m[3], h: +m[4] } : null;
+    };
+    const within = (a: any, b: any) => a && b && a.x >= b.x - 1 && a.y >= b.y - 1 && a.x + a.w <= b.x + b.w + 1 && a.y + a.h <= b.y + b.h + 1;
+    expect(within(rect("vpc"), rect("stack·aws"))).toBe(true);
+    expect(within(rect("ci"), rect("stack·gitlab"))).toBe(true);
+    expect(within(rect("ci"), rect("stack·aws"))).toBe(false);
+  });
+
+  it("does not wrap when there is only one stack (no boundary needed)", () => {
+    const one: GraphIR = { ...multi, groups: { byStack: { aws: ["vpc", "web"] } } };
+    expect(renderContainment(one, {})).not.toContain("data-node-id=\"stack·");
+  });
+});
