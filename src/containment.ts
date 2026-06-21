@@ -107,10 +107,12 @@ function analyze(ir: GraphIR, focus: Focus = "app", pack: SaliencePack = default
   const composite: Record<string, string> = {};
   const compositeType: Record<string, string> = {};
   const overridden = new Set<string>();
+  const dropped = new Set<string>(); // framework config, removed entirely (not hidden)
   for (const n of ir.nodes) {
     role[n.id] = roleForKind(n.kind, focus, pack);
     meta[n.id] = { kind: n.kind, lexicon: n.lexicon };
-    if (role[n.id] !== "plumbing") kept.add(n.id);
+    if (pack.drop?.test(n.kind.toLowerCase())) dropped.add(n.id);
+    else if (role[n.id] !== "plumbing") kept.add(n.id);
     if (n.compositeInstance) {
       composite[n.id] = n.compositeInstance;
       compositeType[n.compositeInstance] = n.compositeParent ?? "composite";
@@ -268,7 +270,7 @@ function analyze(ir: GraphIR, focus: Focus = "app", pack: SaliencePack = default
   // else its composite's sub-box — recoverable by expanding that box.
   const hidden: Record<string, string[]> = {};
   for (const n of ir.nodes) {
-    if (role[n.id] !== "plumbing") continue;
+    if (dropped.has(n.id) || role[n.id] !== "plumbing") continue;
     const h = homeOf(n.id);
     const inst = composite[n.id];
     const home = h && kept.has(h) ? h : inst && kept.has(inst) ? inst : inst ? anchor[inst] : undefined;

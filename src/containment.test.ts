@@ -121,6 +121,27 @@ describe("topology — incidental detection from relationship shape", () => {
   });
 });
 
+describe("drop — framework config components (#38)", () => {
+  const withConfig: GraphIR = {
+    nodes: [
+      { id: "vpc", kind: "AWS::EC2::VPC", lexicon: "aws", attrs: {} },
+      { id: "web", kind: "AWS::EC2::Instance", lexicon: "aws", attrs: {} },
+      { id: "tags", kind: "chant:aws:defaultTags", lexicon: "aws", attrs: {} },
+    ],
+    edges: [{ from: "web", to: "vpc", kind: "ref", viaAttr: "VpcId" }],
+    groups: {},
+  };
+
+  it("removes a chant: pseudo-resource entirely (not even recoverable on expand)", () => {
+    const out = renderContainment(withConfig, {});
+    expect(out).not.toContain('data-node-id="tags"');
+    expect(out).toContain('data-node-id="vpc"');
+    // it's dropped, not stashed in the VPC's hidden set
+    const hides = (containmentNotes(withConfig).vpc ?? []).find((r) => r.label === "hides");
+    expect(hides?.value ?? "").not.toContain("tags");
+  });
+});
+
 describe("presentation pack + manual hints (#28)", () => {
   it("roleForKind honours a swapped pack (taxonomy lives in the pack)", () => {
     const pack = { ...defaultPack, roleRules: [[/widget/, "place"] as [RegExp, "place"]] };

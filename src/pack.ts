@@ -19,6 +19,10 @@ export type Role = "place" | "policy" | "thing" | "plumbing";
 export type Focus = "app" | "network" | "security";
 
 export interface SaliencePack {
+  /** Kinds dropped from the diagram *entirely* (not even recoverable on expand) —
+   * cross-cutting framework config that isn't a resource (default tags, policy
+   * shims). Distinct from plumbing, which is collapsed-but-recoverable. */
+  drop?: RegExp;
   /** kind → role, plumbing-first; first match wins, default `thing`. */
   roleRules: Array<[RegExp, Role]>;
   /** kinds promoted to a structured `place` under network focus. */
@@ -38,6 +42,9 @@ export interface SaliencePack {
 }
 
 export const defaultPack: SaliencePack = {
+  // chant's pseudo-namespace (`chant:aws:defaultTags`, …) is framework config,
+  // not infrastructure — drop it from the picture entirely.
+  drop: /^chant:/,
   roleRules: [
     // plumbing first — these would otherwise look like things/places. Collapsed
     // into the nearest place, recoverable on drill-down. Covers network detail,
