@@ -150,7 +150,9 @@ function analyze(ir: GraphIR, focus: Focus = "app", pack: SaliencePack = default
   // sub-resource (listener, target group) match the ingress rule "loadbalanc".
   const typeOf = (id: string): string => (meta[id].kind.split("::").pop() ?? meta[id].kind).toLowerCase();
   const protectedSubject = (id: string): boolean =>
-    overridden.has(id) || pack.ingress.test(typeOf(id)) || pack.workload.test(typeOf(id)) || pack.valuable.test(typeOf(id));
+    overridden.has(id) ||
+    typeOf(id) === "parameter" || // a cross-stack import socket — the anchor for an inter-stack edge
+    pack.ingress.test(typeOf(id)) || pack.workload.test(typeOf(id)) || pack.valuable.test(typeOf(id));
   for (let changed = true; changed; ) {
     changed = false;
     const di: Record<string, number> = {};
