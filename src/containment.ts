@@ -279,6 +279,50 @@ function analyze(ir: GraphIR, focus: Focus = "app", pack: SaliencePack = default
   return { role, kept, meta, parent, children, depEdges, implied, hidden };
 }
 
+/** Wrap each top-level root in a synthetic boundary box for its deployable stack
+ * (`groups.byStack`), so multiple stacks render box-bounded in one diagram
+ * (#42 / chant#513). Only wraps when there are ≥2 stacks — a single stack needs
+ * no boundary. A root's stack is its own (a real node) or that of a kept
+ * descendant (a synthetic composite box inherits its members' stack). */
+function withStackBoxes(a: Analysis, byStack: Record<string, string[]> | undefined): Analysis {
+  if (!byStack || Object.keys(byStack).length < 2) return a;
+  const stackOf: Record<string, string> = {};
+  for (const [s, ids] of Object.entries(byStack)) for (const id of ids) stackOf[id] = s;
+  const stackForRoot = (root: string): string | undefined => {
+    const seen = new Set<string>();
+    const walk = (id: string): string | undefined => {
+      if (seen.has(id)) return undefined;
+      seen.add(id);
+      if (stackOf[id]) return stackOf[id];
+      for (const c of a.children[id] ?? []) { const s = walk(c); if (s) return s; }
+      return undefined;
+    };
+    return walk(root);
+  };
+  const role = { ...a.role };
+  const meta = { ...a.meta };
+  const parent = { ...a.parent };
+  const children: Record<string, string[]> = {};
+  for (const [k, v] of Object.entries(a.children)) children[k] = [...v];
+  const kept = new Set(a.kept);
+  for (const root of [...a.kept].filter((id) => !a.parent[id]).sort()) {
+    const s = stackForRoot(root);
+    if (!s) continue;
+    const boxId = stackBoxId(s);
+    if (!kept.has(boxId)) {
+      kept.add(boxId);
+      role[boxId] = "place";
+      meta[boxId] = { kind: "stack", lexicon: s };
+      children[boxId] = [];
+    }
+    parent[root] = boxId;
+    children[boxId].push(root);
+  }
+  return { ...a, role, meta, parent, children, kept };
+}
+/** Id for a stack's boundary box. Prefixed so it never collides with a node id. */
+const stackBoxId = (stack: string): string => `stack·${stack}`;
+
 /** Per-node inspector notes for the containment view: what a place *contains*
  * (its kept children) and what plumbing it *hides* (dropped resources that live
  * in it). So clicking a box drills into the detail the salience filter removed. */
@@ -373,7 +417,7 @@ function computeLayout(
 export function renderContainment(ir: GraphIR, opts: ContainmentOptions = {}): string {
   const theme = opts.theme ?? getTheme();
   const focus = opts.focus ?? "app";
-  const { role, kept, meta, parent, children, depEdges, implied } = analyze(ir, focus, opts.pack, opts.hints);
+  const { role, kept, meta, parent, children, depEdges, implied } = withStackBoxes(analyze(ir, focus, opts.pack, opts.hints), ir.groups.byStack);
   const roots = [...kept].filter((id) => !parent[id]).sort();
   const { L, canvasW, canvasH } = computeLayout(roots, children, role);
 
@@ -444,16 +488,23 @@ function box(id: string, L: Layout, role: Role, m: { kind: string; lexicon: stri
   const y = L.Y[id];
   const w = L.W[id];
   const h = L.H[id];
+  // A stack boundary box reads differently: dashed border, the stack name as the
+  // label, and a "stack" badge instead of a resource glyph.
+  const isStack = m.kind === "stack";
+  const label = isStack ? m.lexicon : id;
   const glyph = resolveGlyph({ lexicon: m.lexicon, kind: m.kind });
-  const stroke = role === "place" ? v(theme, "accentStroke") : v(theme, "neutralStroke");
+  const stroke = isStack ? v(theme, "neutralStroke") : role === "place" ? v(theme, "accentStroke") : v(theme, "neutralStroke");
+  const dash = isStack ? ` stroke-dasharray="3 4"` : "";
   // only annotate boxes wide enough to hold it, so a CIDR doesn't run off a subnet
-  const room = Math.floor((w - 52) / 7.5) - id.length - 3;
-  const sub = subtitle && w >= 200 && room > 4 ? `<tspan fill="${v(theme, "textFaint")}" font-weight="400"> · ${esc(clip(subtitle, room))}</tspan>` : "";
+  const room = Math.floor((w - 52) / 7.5) - label.length - 3;
+  const sub = isStack
+    ? `<tspan fill="${v(theme, "textFaint")}" font-weight="400"> stack</tspan>`
+    : subtitle && w >= 200 && room > 4 ? `<tspan fill="${v(theme, "textFaint")}" font-weight="400"> · ${esc(clip(subtitle, room))}</tspan>` : "";
   return (
     `<g data-node-id="${esc(id)}">` +
-    `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="14" fill="${v(theme, "neutralFill")}" fill-opacity="0.5" stroke="${stroke}" stroke-width="1.4"/>` +
-    glyphAt(glyph.body, x + 14, y + 7, 18, theme) +
-    `<text x="${x + 40}" y="${y + 21}" fill="${v(theme, "text")}" font-size="13" font-weight="700">${esc(clip(id, Math.floor((w - 52) / 7.5)))}${sub}</text>` +
+    `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="14" fill="${v(theme, "neutralFill")}" fill-opacity="${isStack ? "0.25" : "0.5"}" stroke="${stroke}" stroke-width="1.4"${dash}/>` +
+    (isStack ? "" : glyphAt(glyph.body, x + 14, y + 7, 18, theme)) +
+    `<text x="${x + (isStack ? 16 : 40)}" y="${y + 21}" fill="${v(theme, "text")}" font-size="13" font-weight="700">${esc(clip(label, Math.floor((w - 52) / 7.5)))}${sub}</text>` +
     `</g>`
   );
 }
@@ -650,8 +701,9 @@ export function renderContainmentApp(ir: GraphIR, opts: ContainmentOptions = {})
   // drawn once and glide between states.
   const focus = opts.focus ?? "app";
   const primaryFocus: Focus = focus === "security" ? "security" : "app";
-  const primary = analyze(ir, primaryFocus, opts.pack, opts.hints);
-  const variants = [primary, analyze(ir, "network", opts.pack, opts.hints)];
+  const wrap = (a: Analysis): Analysis => withStackBoxes(a, ir.groups.byStack);
+  const primary = wrap(analyze(ir, primaryFocus, opts.pack, opts.hints));
+  const variants = [primary, wrap(analyze(ir, "network", opts.pack, opts.hints))];
   const realNodes = new Set(ir.nodes.map((n) => n.id));
   const expandIndex: Record<string, number> = {};
   // A real place (the VPC) toggles to the structured network view (state 1).
@@ -664,7 +716,7 @@ export function renderContainmentApp(ir: GraphIR, opts: ContainmentOptions = {})
     const roles: Record<string, Role> = { ...(opts.hints?.roles ?? {}) };
     for (const hid of ids) roles[hid] = "thing";
     expandIndex[box] = variants.length;
-    variants.push(analyze(ir, primaryFocus, opts.pack, { ...opts.hints, roles }));
+    variants.push(wrap(analyze(ir, primaryFocus, opts.pack, { ...opts.hints, roles })));
   }
   const subtitleOf = (id: string): string | undefined => subtitleFor(id, ir);
   const center = (L: Layout, id: string) => ({ x: Math.round(L.X[id] + L.W[id] / 2), y: Math.round(L.Y[id] + L.H[id] / 2) });
