@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { GraphIR, Layout, NodeSize } from "@intentius/chant";
 
 /**
@@ -33,25 +33,48 @@ export function graphFlags(opts: GraphOptions): string[] {
   return flags;
 }
 
-/** Locate the chant bin from the installed dependency. Walks up from the resolved
- * package entry to the package root (chant's `exports` map blocks resolving
- * `package.json` directly), then returns its `bin/chant`. */
-function chantBin(): string {
-  const require = createRequire(import.meta.url);
-  let dir = dirname(require.resolve("@intentius/chant"));
+/** Resolve `@intentius/chant`'s bin path as seen from `req`, walking up from the
+ * resolved entry to the package root (chant's `exports` map blocks resolving
+ * `package.json` directly). Returns undefined if chant isn't resolvable from there.
+ * Exported for testing. */
+export function chantBinFrom(req: ReturnType<typeof createRequire>): string | undefined {
+  let entry: string;
+  try {
+    entry = req.resolve("@intentius/chant");
+  } catch {
+    return undefined; // chant not installed in this resolution scope
+  }
+  let dir = dirname(entry);
   for (let i = 0; i < 8; i++) {
     const manifest = join(dir, "package.json");
     if (existsSync(manifest)) {
-      const pkg = JSON.parse(readFileSync(manifest, "utf8")) as { name?: string; bin?: Record<string, string> };
-      if (pkg.name === "@intentius/chant") {
-        const rel = pkg.bin?.chant ?? "bin/chant";
-        return join(dir, rel);
+      try {
+        const pkg = JSON.parse(readFileSync(manifest, "utf8")) as { name?: string; bin?: Record<string, string> };
+        if (pkg.name === "@intentius/chant") return join(dir, pkg.bin?.chant ?? "bin/chant");
+      } catch {
+        // malformed manifest — keep walking
       }
     }
     const parent = dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
+  return undefined;
+}
+
+/** Locate the chant bin, **preferring the target project's own install** so its
+ * declared lexicons resolve naturally (#36) — pinhole shouldn't have to bundle
+ * every lexicon. Falls back to pinhole's bundled chant when the project has none
+ * (or isn't a node project). */
+function chantBin(projectDir?: string): string {
+  if (projectDir) {
+    // Resolve as if required from inside the project, so Node searches the
+    // project's node_modules first.
+    const fromProject = chantBinFrom(createRequire(join(resolve(projectDir), "noop.js")));
+    if (fromProject) return fromProject;
+  }
+  const own = chantBinFrom(createRequire(import.meta.url));
+  if (own) return own;
   throw new Error("could not locate the @intentius/chant bin");
 }
 
@@ -64,10 +87,11 @@ export interface ChantRun {
 }
 
 /** Spawn chant and resolve with its exit code + streams, never rejecting on a
- * non-zero exit (only on a spawn failure). */
-export function runChantRaw(args: string[], input?: string): Promise<ChantRun> {
+ * non-zero exit (only on a spawn failure). `projectDir` selects which chant
+ * install to run (the project's own, preferentially). */
+export function runChantRaw(args: string[], input?: string, projectDir?: string): Promise<ChantRun> {
   return new Promise((resolve, reject) => {
-    const proc = spawn(chantBin(), args, { stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"] });
+    const proc = spawn(chantBin(projectDir), args, { stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     proc.stdout!.on("data", (d) => (stdout += d));
@@ -81,8 +105,8 @@ export function runChantRaw(args: string[], input?: string): Promise<ChantRun> {
   });
 }
 
-function runChant(args: string[], input?: string): Promise<string> {
-  return runChantRaw(args, input).then(({ code, stdout, stderr }) => {
+function runChant(args: string[], input?: string, projectDir?: string): Promise<string> {
+  return runChantRaw(args, input, projectDir).then(({ code, stdout, stderr }) => {
     if (code === 0) return stdout;
     throw new Error(`chant ${args[0]} exited ${code}: ${stderr.trim() || stdout.trim()}`);
   });
@@ -101,20 +125,20 @@ export interface LintReport {
 /** Run the lint gate. This is the same check that gates `chant graph` (and thus
  * every rendered diagram): clean source lints, exits 0, and renders. */
 export async function lint(projectDir: string): Promise<LintReport> {
-  const json = await runChantRaw(["lint", projectDir, "--format", "json"]);
+  const json = await runChantRaw(["lint", projectDir, "--format", "json"], undefined, projectDir);
   let diagnostics: unknown = [];
   try {
     diagnostics = JSON.parse(json.stdout || "[]");
   } catch {
     diagnostics = []; // non-JSON on stdout (shouldn't happen) — fall back to the exit code
   }
-  const human = await runChantRaw(["lint", projectDir]);
+  const human = await runChantRaw(["lint", projectDir], undefined, projectDir);
   return { ok: json.code === 0, diagnostics, stylish: (human.stdout + human.stderr).trim() };
 }
 
 /** Get the graph IR for a chant project. */
 export async function graphIr(projectDir: string, opts: GraphOptions = {}): Promise<GraphIR> {
-  const out = await runChant(["graph", projectDir, "--format", "ir", ...graphFlags(opts)]);
+  const out = await runChant(["graph", projectDir, "--format", "ir", ...graphFlags(opts)], undefined, projectDir);
   return JSON.parse(out) as GraphIR;
 }
 
@@ -133,6 +157,6 @@ export async function graphLayout(
     args.push("--node-sizes", "-");
     input = JSON.stringify(sizes);
   }
-  const out = await runChant(args, input);
+  const out = await runChant(args, input, projectDir);
   return JSON.parse(out) as Layout;
 }
