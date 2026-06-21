@@ -37,3 +37,29 @@ describe("composeStacks", () => {
     expect(merged.groups.byStack).toEqual({ infra: ["infra/vpc", "infra/web"], api: ["api/vpc"] });
   });
 });
+
+describe("composeStacks — cross-stack edges (#513)", () => {
+  const infra = {
+    nodes: [{ id: "cluster", kind: "AWS::ECS::Cluster", lexicon: "aws", attrs: {} }],
+    edges: [],
+    groups: {},
+    exports: [{ name: "ClusterArn", node: "cluster", attr: "Arn" }],
+  } as unknown as GraphIR;
+  const api: GraphIR = {
+    nodes: [
+      { id: "clusterArn", kind: "AWS::CloudFormation::Parameter", lexicon: "aws", attrs: {} },
+      { id: "other", kind: "AWS::CloudFormation::Parameter", lexicon: "aws", attrs: {} },
+    ],
+    edges: [],
+    groups: {},
+  };
+  const merged = composeStacks([{ name: "infra", ir: infra }, { name: "api", ir: api }]);
+
+  it("links an import socket to the producing node in another stack (name match, case-insensitive)", () => {
+    expect(merged.edges).toContainEqual({ from: "api/clusterArn", to: "infra/cluster", kind: "ref", viaAttr: "import" });
+  });
+
+  it("leaves an unmatched import socket unconnected", () => {
+    expect(merged.edges.some((e) => e.from === "api/other")).toBe(false);
+  });
+});

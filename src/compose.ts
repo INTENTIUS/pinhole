@@ -10,6 +10,21 @@ import type { GraphIR, IRNode, IREdge } from "./ir.ts";
 
 const SEP = "/";
 
+/** A cross-stack export a stack publishes (from chant's `ir.exports`, #513). */
+interface IRExport {
+  name: string;
+  node?: string;
+  attr?: string;
+}
+
+/** Normalise a cross-stack handle for matching: an export `ClusterArn` and a
+ * Parameter import `clusterArn` are the same socket. */
+const normHandle = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/** True for a node that is a cross-stack import socket (a CloudFormation Parameter
+ * or equivalent), matched by name to another stack's export. */
+export const isImportSocket = (kind: string): boolean => /::parameter$|\bparameter$/i.test(kind);
+
 /** Shorten stack paths/labels to readable names by stripping the longest common
  * prefix (so `gitlab-aws-alb-{infra,api,ui}` reads as `infra`/`api`/`ui`). */
 export function shortStackNames(paths: string[]): string[] {
@@ -49,6 +64,14 @@ export function composeStacks(stacks: Array<{ name: string; ir: GraphIR }>): Gra
   const byLexicon: Record<string, string[]> = {};
   const byComposite: Record<string, string[]> = {};
 
+  // Each stack's exports, keyed by normalised name → its (namespaced) producer.
+  const producerOf = new Map<string, string>();
+  for (const { name, ir } of stacks) {
+    for (const e of (ir as { exports?: IRExport[] }).exports ?? []) {
+      if (e.node) producerOf.set(normHandle(e.name), `${name}${SEP}${e.node}`);
+    }
+  }
+
   for (const { name, ir } of stacks) {
     const ns = (id: string): string => `${name}${SEP}${id}`;
     for (const n of ir.nodes) {
@@ -59,6 +82,14 @@ export function composeStacks(stacks: Array<{ name: string; ir: GraphIR }>): Gra
       (byStack[name] ??= []).push(id);
       (byLexicon[n.lexicon] ??= []).push(id);
       if (node.compositeInstance) (byComposite[node.compositeInstance] ??= []).push(id);
+      // Cross-stack edge: an import socket (Parameter `clusterArn`) → the node that
+      // produces the matching export (`ClusterArn`) in another stack. The IR can't
+      // express the within-stack consumer→param link (it's an opaque intrinsic), so
+      // the Parameter node is the visible bridge between the two stacks (#513).
+      if (isImportSocket(n.kind)) {
+        const producer = producerOf.get(normHandle(n.id));
+        if (producer && producer !== id) edges.push({ from: id, to: producer, kind: "ref", viaAttr: "import" });
+      }
     }
     for (const e of ir.edges) edges.push({ ...e, from: ns(e.from), to: ns(e.to) });
   }
