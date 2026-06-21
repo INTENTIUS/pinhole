@@ -50,7 +50,11 @@ exactly what's wrong.
     --lens <k>:<t>    e.g. lexicon:aws, stack:web, blast:vpc (with --up/--down).
     --icon            compact glyph nodes for dense graphs.
     --containment     drop low-signal plumbing; render the VPC as a boundary with
-                      its resources inside (--focus app|network|security).
+                      its resources inside (--focus app|network|security). Pass
+                      several project dirs and/or `--ir <file>` to render them as
+                      separate stacks, each in its own boundary box.
+    --ir <file.json>  render a pre-captured IR (any source) instead of graphing a
+                      project — pinhole renders the IR, so this needs no chant.
     --hints <file>    (with --containment) override salience — { roles: { id:
                       role }, edges: [ { from, to } ] } to force-keep/drop a node
                       or assert a relationship the IR can't express.
