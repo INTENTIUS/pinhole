@@ -643,13 +643,29 @@ export function renderContainmentApp(ir: GraphIR, opts: ContainmentOptions = {})
   const theme = opts.theme ?? getTheme();
   const title = opts.title ?? "Infrastructure";
 
-  // Two focus states: a primary (app, or security when that's the lens) and
-  // "network" (subnets/route tables are structured boxes). Clicking the VPC
-  // toggles between them. Leaf nodes are drawn once and glide between states.
+  // State 0 is the primary (app, or security when that's the lens); state 1 is
+  // "network" (subnets/route tables become structured boxes). Beyond those, each
+  // box that collapsed members gets its *own* expanded state that un-collapses
+  // them in place. Clicking a box toggles to its expanded state. Leaf nodes are
+  // drawn once and glide between states.
   const focus = opts.focus ?? "app";
-  const variants = focus === "security"
-    ? [analyze(ir, "security", opts.pack, opts.hints), analyze(ir, "network", opts.pack, opts.hints)]
-    : [analyze(ir, "app", opts.pack, opts.hints), analyze(ir, "network", opts.pack, opts.hints)];
+  const primaryFocus: Focus = focus === "security" ? "security" : "app";
+  const primary = analyze(ir, primaryFocus, opts.pack, opts.hints);
+  const variants = [primary, analyze(ir, "network", opts.pack, opts.hints)];
+  const realNodes = new Set(ir.nodes.map((n) => n.id));
+  const expandIndex: Record<string, number> = {};
+  // A real place (the VPC) toggles to the structured network view (state 1).
+  for (const id of primary.kept) if (realNodes.has(id) && primary.role[id] === "place") expandIndex[id] = 1;
+  // Any *other* box that hid members (a composite sub-box, e.g. the ALB group's
+  // listener + execution role) gets a dedicated expanded variant: force its
+  // hidden members kept (role override) so they nest inside it, revealed in place.
+  for (const [box, ids] of Object.entries(primary.hidden)) {
+    if (box in expandIndex || ids.length === 0) continue;
+    const roles: Record<string, Role> = { ...(opts.hints?.roles ?? {}) };
+    for (const hid of ids) roles[hid] = "thing";
+    expandIndex[box] = variants.length;
+    variants.push(analyze(ir, primaryFocus, opts.pack, { ...opts.hints, roles }));
+  }
   const subtitleOf = (id: string): string | undefined => subtitleFor(id, ir);
   const center = (L: Layout, id: string) => ({ x: Math.round(L.X[id] + L.W[id] / 2), y: Math.round(L.Y[id] + L.H[id] / 2) });
 
@@ -705,10 +721,6 @@ export function renderContainmentApp(ir: GraphIR, opts: ContainmentOptions = {})
 
   const badges = badgeIds.map((id) => originBadge(id, roleOf[id], metaOf[id], theme, focus)).join("");
 
-  // The VPC (a real place node in app focus) toggles to the network state.
-  const realNodes = new Set(ir.nodes.map((n) => n.id));
-  const expandIndex: Record<string, number> = {};
-  for (const id of variants[0].kept) if (realNodes.has(id) && variants[0].role[id] === "place") expandIndex[id] = 1;
   const startState = focus === "network" ? 1 : 0;
 
   const META: Record<string, { kind: string; lexicon: string; attrs: unknown }> = {};
@@ -748,7 +760,7 @@ ${CONTAIN_CSS}
 <body>
 <header class="pin-bar">
   <h1>${esc(title)}</h1>
-  <span class="pin-hint">click the VPC to switch app/network · click any box to see what it collapsed</span>
+  <span class="pin-hint">click the VPC for the network view · click a box to expand what it collapsed</span>
   <label class="pin-theme">theme <select id="pin-theme-select">${themeOptions}</select></label>
 </header>
 <main class="pin-stage" id="pin-stage">${svg}</main>

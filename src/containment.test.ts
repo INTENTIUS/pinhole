@@ -332,6 +332,26 @@ describe("renderContainmentApp (interactive expand)", () => {
     expect(() => new Function(script)).not.toThrow();
   });
 
+  it("makes a composite box expandable to reveal its collapsed glue in place (#38 item 1)", () => {
+    const appIr: GraphIR = {
+      nodes: [
+        { id: "vpc", kind: "AWS::EC2::VPC", lexicon: "aws", attrs: {} },
+        { id: "alb", kind: "AWS::ELBv2::LoadBalancer", lexicon: "aws", attrs: {}, compositeInstance: "app", compositeParent: "FargateAlb" },
+        { id: "svc", kind: "AWS::ECS::Service", lexicon: "aws", attrs: {}, compositeInstance: "app", compositeParent: "FargateAlb" },
+        { id: "role", kind: "AWS::IAM::Role", lexicon: "aws", attrs: {}, compositeInstance: "app", compositeParent: "FargateAlb" }, // plumbing → hidden under the app box
+      ],
+      edges: [{ from: "alb", to: "vpc", kind: "ref", viaAttr: "Subnets" }],
+      groups: {},
+    };
+    const out = renderContainmentApp(appIr, {});
+    const script = out.match(/<script>([\s\S]*?)<\/script>/)![1].replace(/\\u003c/g, "<");
+    const EXPAND = JSON.parse(script.match(/const EXPAND = (\{[\s\S]*?\});\n/)![1]);
+    const STATES = JSON.parse(script.match(/const STATES = (\[[\s\S]*?\]);\n/)![1]);
+    expect("app" in EXPAND).toBe(true); // the composite box has its own expand state
+    expect(STATES[0].pos).not.toHaveProperty("role"); // collapsed in the base view
+    expect(STATES[EXPAND.app].pos).toHaveProperty("role"); // revealed when the box is expanded
+  });
+
   it("offers per-box drill-down: lists what each box collapsed (#38 item 1)", () => {
     const script = app.match(/<script>([\s\S]*?)<\/script>/)![1].replace(/\\u003c/g, "<");
     const DRILL = JSON.parse(script.match(/const DRILL = (\{[\s\S]*?\});\n/)![1]);
