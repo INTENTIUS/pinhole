@@ -5,6 +5,8 @@ import { renderSvg, cardSizes } from "./paint/render.ts";
 import { renderHtml } from "./html.ts";
 import { renderMorphHtml, type MorphView } from "./morph.ts";
 import { renderContainment, renderContainmentApp, type Focus, type Hints } from "./containment.ts";
+import { composeStacks, shortStackNames } from "./compose.ts";
+import type { GraphIR } from "./ir.ts";
 import { summarizeIr, describeText } from "./inspect.ts";
 import { GUIDE } from "./guide.ts";
 
@@ -17,9 +19,9 @@ Usage:
   pinhole describe <project-dir> [--json]      current nodes, edges, composites
   pinhole check    <project-dir> [--json]      run the lint gate (exit 0 = clean)
   pinhole guide                                how an agent drives pinhole
-  pinhole render <project-dir> [-o out.svg] [--html out.html] [--title <text>]
-                               [--theme <name>] [--rich] [--icon] [--json]
-                               [--detail 0..3] [--lens <kind>:<target>] [--up] [--down]
+  pinhole render <project-dir>... [--ir <ir.json>]... [-o out.svg] [--html out.html]
+                               [--title <text>] [--theme <name>] [--rich] [--icon]
+                               [--json] [--detail 0..3] [--lens <k>:<t>] [--up] [--down]
 
 Themes: dark (default), light, blueprint, aws.
 --rich emits foreignObject HTML labels (browser/inline only); default is portable
@@ -32,6 +34,10 @@ identity. Needs at least two distinct tiers.
 --containment (experimental) drops low-signal plumbing and renders the VPC as a
 boundary with its resources inside; only dependency refs stay as lines. Click
 the VPC (in --html) to switch between app and network views.
+With --containment, pass several project dirs and/or --ir files to render them as
+separate stacks, each in its own boundary box (multi-stack composition). pinhole
+renders the IR, so --ir <file.json> draws a pre-captured graph from any source —
+no chant needed.
 --focus app|network|security shapes what's salient (default app): network is
 light context, or the structured subject, or security policy is first-class.
 --hints <file.json> (with --containment) overrides salience: { "roles": { id:
@@ -137,7 +143,8 @@ function fail(err: unknown, json: boolean): number {
 }
 
 async function runRender(args: string[]): Promise<number> {
-  let dir: string | undefined;
+  const dirs: string[] = []; // project dirs (graphed via chant) — each a stack
+  const irFiles: string[] = []; // pre-captured IR files (--ir) — source-agnostic stacks
   let out: string | undefined;
   let html: string | undefined;
   let title: string | undefined;
@@ -165,6 +172,7 @@ async function runRender(args: string[]): Promise<number> {
     else if (a === "--containment" || a === "--boxes") containment = true;
     else if (a === "--focus") focus = (args[++i] as Focus) ?? "app";
     else if (a === "--hints") hintsPath = args[++i];
+    else if (a === "--ir") irFiles.push(args[++i]);
     else if (a === "--highlight") pulse = (args[++i] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
     else if (a === "--flow") flow = true;
     else if (a === "--json") json = true;
@@ -172,11 +180,13 @@ async function runRender(args: string[]): Promise<number> {
     else if (a === "--lens") opts.lens = args[++i];
     else if (a === "--up") opts.up = true;
     else if (a === "--down") opts.down = true;
-    else if (!a.startsWith("-")) dir = a;
+    else if (!a.startsWith("-")) dirs.push(a);
   }
 
-  if (!dir) {
-    process.stderr.write(`pinhole: render needs a project directory\n\n${USAGE}`);
+  const dir = dirs[0]; // morph/normal render operate on a single project
+  const stackCount = dirs.length + irFiles.length;
+  if (stackCount === 0) {
+    process.stderr.write(`pinhole: render needs a project directory (or --ir <file>)\n\n${USAGE}`);
     return 2;
   }
 
@@ -195,6 +205,8 @@ async function runRender(args: string[]): Promise<number> {
     const theme = getTheme(themeName);
 
     if (morph) {
+      if (stackCount > 1) return fail(new Error("--morph renders a single project; multiple stacks / --ir need --containment"), json);
+      if (!dir) return fail(new Error("--morph needs a project directory (it graphs detail tiers via chant, not --ir)"), json);
       if (!html) return fail(new Error("--morph writes an interactive artifact; pass --html <file>"), json);
       const views = await buildMorphViews(dir, opts, title);
       if (views.length < 2) {
@@ -205,11 +217,16 @@ async function runRender(args: string[]): Promise<number> {
       return done();
     }
 
-    const ir = await graphIr(dir, opts);
-
-    // Containment does its own salience filter + nested-box layout (no chant
-    // layout). --html gets the interactive expand artifact; -o gets a static SVG.
+    // Containment composes multiple stacks — project dirs (graphed via chant)
+    // and/or pre-captured IRs (--ir, any source) — into one diagram, each a
+    // boundary box. It does its own layout (no chant layout), so --ir renders
+    // without chant at all.
     if (containment) {
+      const stacks: Array<{ name: string; ir: GraphIR }> = [];
+      for (const d of dirs) stacks.push({ name: d, ir: await graphIr(d, opts) });
+      for (const f of irFiles) stacks.push({ name: f, ir: JSON.parse(await readFile(f, "utf8")) as GraphIR });
+      const names = shortStackNames(stacks.map((s) => s.name));
+      const ir = stacks.length === 1 ? stacks[0].ir : composeStacks(stacks.map((s, i) => ({ name: names[i], ir: s.ir })));
       const hints = hintsPath ? (JSON.parse(await readFile(hintsPath, "utf8")) as Hints) : undefined;
       const copts = { title, theme, focus, hints };
       if (html) {
@@ -224,6 +241,12 @@ async function runRender(args: string[]): Promise<number> {
       return done();
     }
 
+    // The card view lays out via chant (one project, real card sizes), so it
+    // needs a single project dir — not --ir or multiple stacks.
+    if (stackCount > 1 || irFiles.length || !dir) {
+      return fail(new Error("multiple stacks / --ir need --containment (the card view lays out one project via chant)"), json);
+    }
+    const ir = await graphIr(dir, opts);
     // Otherwise measure each node's card, lay out with those sizes, and paint.
     const svg = renderSvg(ir, await graphLayout(dir, opts, cardSizes(ir, { style })), {
       title,
