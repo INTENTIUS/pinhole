@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { roleForKind, renderContainment, containmentNotes, renderContainmentApp, subtitleFor } from "./containment.ts";
 import { defaultPack } from "./pack.ts";
+import { composeStacks } from "./compose.ts";
 import type { GraphIR } from "./ir.ts";
 
 describe("roleForKind", () => {
@@ -410,5 +411,32 @@ describe("byStack boundary boxes (#42 / chant#513 phase 1)", () => {
   it("does not wrap when there is only one stack (no boundary needed)", () => {
     const one: GraphIR = { ...multi, groups: { byStack: { aws: ["vpc", "web"] } } };
     expect(renderContainment(one, {})).not.toContain("data-node-id=\"stack·");
+  });
+});
+
+describe("collapsable stack boxes (#45)", () => {
+  const infra = {
+    nodes: [{ id: "cluster", kind: "AWS::ECS::Cluster", lexicon: "aws", attrs: {} }],
+    edges: [], groups: {}, exports: [{ name: "ClusterArn", node: "cluster", attr: "Arn" }],
+  } as unknown as GraphIR;
+  const api: GraphIR = {
+    nodes: [{ id: "clusterArn", kind: "AWS::CloudFormation::Parameter", lexicon: "aws", attrs: {} }],
+    edges: [], groups: {},
+  };
+  const merged = composeStacks([{ name: "infra", ir: infra }, { name: "api", ir: api }]);
+  const app = renderContainmentApp(merged, {});
+  const script = app.match(/<script>([\s\S]*?)<\/script>/)![1].replace(/\\u003c/g, "<");
+  const EXPAND = JSON.parse(script.match(/const EXPAND = (\{[\s\S]*?\});\n/)![1]);
+  const STATES = JSON.parse(script.match(/const STATES = (\[[\s\S]*?\]);\n/)![1]);
+
+  it("makes each stack box foldable", () => {
+    expect("stack·infra" in EXPAND).toBe(true);
+    expect("stack·api" in EXPAND).toBe(true);
+  });
+
+  it("folding a stack drops its contents and re-anchors its cross-stack edges to the folded box", () => {
+    const folded = STATES[EXPAND["stack·infra"]];
+    expect(folded.boxes).not.toContain("infra/cluster"); // contents folded away
+    expect(folded.edges).toContain('data-edge-to="stack·infra"'); // the api→infra/cluster edge re-anchors
   });
 });
