@@ -324,6 +324,32 @@ function withStackBoxes(a: Analysis, byStack: Record<string, string[]> | undefin
 }
 /** Id for a stack's boundary box. Prefixed so it never collides with a node id. */
 const stackBoxId = (stack: string): string => `stack·${stack}`;
+/** A stack box is a synthetic place whose meta kind is "stack". */
+const isStackBox = (id: string, meta: Record<string, { kind: string }>): boolean => meta[id]?.kind === "stack";
+
+/** Collapse one stack to a summary: drop its contents, leave the (now childless)
+ * stack box as a compact box, and re-anchor any edge that touched the stack's
+ * interior to the box — so a folded stack still shows its cross-stack wiring. */
+function collapseStack(a: Analysis, stackBox: string): Analysis {
+  const inside = new Set<string>();
+  const collect = (id: string): void => { for (const c of a.children[id] ?? []) { inside.add(c); collect(c); } };
+  collect(stackBox);
+  if (inside.size === 0) return a;
+
+  const kept = new Set([...a.kept].filter((id) => !inside.has(id)));
+  const children: Record<string, string[]> = { ...a.children, [stackBox]: [] };
+  const parent: Record<string, string> = { ...a.parent };
+  for (const id of inside) { delete children[id]; delete parent[id]; }
+
+  const anchor = (id: string): string => (inside.has(id) ? stackBox : id);
+  const keep = (e: { from: string; to: string }): boolean => e.from !== e.to && kept.has(e.from) && kept.has(e.to);
+  const depEdges = a.depEdges.map((e) => ({ ...e, from: anchor(e.from), to: anchor(e.to) })).filter(keep);
+  const seen = new Set<string>();
+  const dedup = depEdges.filter((e) => { const k = `${e.from}>${e.to}>${e.via ?? ""}`; if (seen.has(k)) return false; seen.add(k); return true; });
+  const implied = a.implied.map((e) => ({ from: anchor(e.from), to: anchor(e.to) })).filter(keep);
+
+  return { ...a, kept, children, parent, depEdges: dedup, implied };
+}
 
 /** Per-node inspector notes for the containment view: what a place *contains*
  * (its kept children) and what plumbing it *hides* (dropped resources that live
@@ -720,6 +746,17 @@ export function renderContainmentApp(ir: GraphIR, opts: ContainmentOptions = {})
     expandIndex[box] = variants.length;
     variants.push(wrap(analyze(ir, primaryFocus, opts.pack, { ...opts.hints, roles })));
   }
+  // Multi-stack: each stack box folds to a summary. Clicking it collapses the
+  // stack's contents (others stay full, re-laid out) and re-anchors its
+  // cross-stack edges to the folded box — same single-active toggle as the boxes.
+  const stackBoxes = [...primary.kept].filter((id) => isStackBox(id, primary.meta));
+  if (stackBoxes.length >= 2) {
+    for (const sb of stackBoxes) {
+      if (sb in expandIndex) continue;
+      expandIndex[sb] = variants.length;
+      variants.push(collapseStack(primary, sb));
+    }
+  }
   const subtitleOf = (id: string): string | undefined => subtitleFor(id, ir);
   const center = (L: Layout, id: string) => ({ x: Math.round(L.X[id] + L.W[id] / 2), y: Math.round(L.Y[id] + L.H[id] / 2) });
 
@@ -814,7 +851,7 @@ ${CONTAIN_CSS}
 <body>
 <header class="pin-bar">
   <h1>${esc(title)}</h1>
-  <span class="pin-hint">click the VPC for the network view · click a box to expand what it collapsed</span>
+  <span class="pin-hint">click a box to expand what it collapsed · click a stack box to fold the whole stack</span>
   <label class="pin-theme">theme <select id="pin-theme-select">${themeOptions}</select></label>
 </header>
 <main class="pin-stage" id="pin-stage">${svg}</main>
