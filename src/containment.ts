@@ -44,7 +44,7 @@ export function roleForKind(kind: string, focus: Focus = "app", pack: SaliencePa
 const MARGIN = 60;
 const TITLE_BAND = 84;
 const LEAF_W = 124;
-const LEAF_H = 86;
+const LEAF_H = 96; // room for a bigger glyph + a two-line label (no mid-word truncation)
 const PAD = 16;
 const BOX_TITLE = 30;
 const GAP = 18;
@@ -591,7 +591,7 @@ export function subtitleFor(id: string, ir: GraphIR): string | undefined {
   return parts.length ? parts.join(" · ") : undefined;
 }
 
-function box(id: string, L: Layout, role: Role, m: { kind: string; lexicon: string }, theme: Theme, subtitle?: string, diff?: string): string {
+function box(id: string, L: Layout, role: Role, m: { kind: string; lexicon: string }, theme: Theme, subtitle?: string, diff?: string, displayLabel = id): string {
   const x = L.X[id];
   const y = L.Y[id];
   const w = L.W[id];
@@ -599,20 +599,20 @@ function box(id: string, L: Layout, role: Role, m: { kind: string; lexicon: stri
   // A stack boundary box reads differently: dashed border, the stack name as the
   // label, and a "stack" badge instead of a resource glyph.
   const isStack = m.kind === "stack";
-  const label = isStack ? m.lexicon : id;
+  const label = isStack ? m.lexicon : displayLabel;
   const glyph = resolveGlyph({ lexicon: m.lexicon, kind: m.kind });
   const stroke = isStack ? v(theme, "neutralStroke") : role === "place" ? v(theme, "accentStroke") : v(theme, "neutralStroke");
   const dash = isStack ? ` stroke-dasharray="3 4"` : "";
   // only annotate boxes wide enough to hold it, so a CIDR doesn't run off a subnet
-  const room = Math.floor((w - 52) / 7.5) - label.length - 3;
+  const room = Math.floor((w - 56) / 8) - label.length - 3;
   const sub = isStack
     ? `<tspan fill="${v(theme, "textFaint")}" font-weight="400"> stack</tspan>`
     : subtitle && w >= 200 && room > 4 ? `<tspan fill="${v(theme, "textFaint")}" font-weight="400"> · ${esc(clip(subtitle, room))}</tspan>` : "";
   return (
     `<g data-node-id="${esc(id)}"${diff ? ` data-diff="${diff}"` : ""}>` +
     `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="14" fill="${v(theme, "neutralFill")}" fill-opacity="${isStack ? "0.25" : "0.5"}" stroke="${stroke}" stroke-width="1.4"${dash}/>` +
-    (isStack ? "" : glyphAt(glyph.body, x + 14, y + 7, 18, theme)) +
-    `<text x="${x + (isStack ? 16 : 40)}" y="${y + 21}" fill="${v(theme, "text")}" font-size="13" font-weight="700">${esc(clip(label, Math.floor((w - 52) / 7.5)))}${sub}</text>` +
+    (isStack ? "" : glyphAt(glyph.body, x + 14, y + 8, 22, theme)) +
+    `<text x="${x + (isStack ? 16 : 44)}" y="${y + 23}" fill="${v(theme, "text")}" font-size="14" font-weight="700">${esc(clip(label, Math.floor((w - 56) / 8)))}${sub}</text>` +
     `</g>`
   );
 }
@@ -629,8 +629,29 @@ function emphasis(role: Role, focus: Focus): { context: boolean; subject: boolea
  * (`api/vpcId` → `vpcId`). */
 const portLabel = (id: string): string => id.slice(id.lastIndexOf("/") + 1);
 
+const GLYPH = 32; // leaf icon size — bigger than the label so the card reads icon-first
+
+/** Wrap a label to at most two lines, breaking on a camelCase seam near the budget
+ * so a long id reads in full (`PrivateRouteTable`) instead of truncating to 14. */
+function labelLines(s: string, perLine = 16): string[] {
+  if (s.length <= perLine) return [s];
+  let cut = perLine;
+  for (let i = Math.min(perLine, s.length - 1); i > perLine * 0.45; i--) {
+    if (/[A-Z0-9]/.test(s[i]) && /[a-z]/.test(s[i - 1])) { cut = i; break; } // a camelCase boundary
+  }
+  const rest = s.slice(cut);
+  return [s.slice(0, cut), rest.length > perLine ? clip(rest, perLine) : rest];
+}
+
+/** A centered label, wrapped to two lines via {@link labelLines}. */
+function labelText(s: string, x: number, y: number, theme: Theme, o: { fontSize?: number; cls?: string; opacity?: string } = {}): string {
+  const fs = o.fontSize ?? 10;
+  const tspans = labelLines(s).map((ln, i) => `<tspan x="${x}" dy="${i === 0 ? 0 : fs + 2}">${esc(ln)}</tspan>`).join("");
+  return `<text${o.cls ? ` class="${o.cls}"` : ""} x="${x}" y="${y}" text-anchor="middle" fill="${v(theme, "text")}" font-size="${fs}" font-weight="600"${o.opacity ? ` opacity="${o.opacity}"` : ""}>${tspans}</text>`;
+}
+
 /** A leaf node (thing/policy): glyph badge + a label below it. */
-function badge(id: string, L: Layout, role: Role, m: { kind: string; lexicon: string }, theme: Theme, focus: Focus = "app"): string {
+function badge(id: string, L: Layout, role: Role, m: { kind: string; lexicon: string }, theme: Theme, focus: Focus = "app", label = id): string {
   const x = L.X[id];
   const y = L.Y[id];
   const w = L.W[id];
@@ -647,8 +668,8 @@ function badge(id: string, L: Layout, role: Role, m: { kind: string; lexicon: st
     `<g data-node-id="${esc(id)}">` +
     `<rect x="${bx}" y="${by}" width="${badgeSize}" height="${badgeSize}" rx="13" fill="${v(theme, "neutralFill")}" fill-opacity="${fillOpacity}" stroke="${stroke}" stroke-width="${subject ? 1.8 : 1.4}"/>` +
     `<rect x="${bx}" y="${by}" width="${badgeSize}" height="4" rx="2" fill="${bar}"/>` +
-    glyphAt(glyph.body, cx - 13, by + 12, 26, theme) +
-    `<text x="${cx}" y="${by + badgeSize + 16}" text-anchor="middle" fill="${v(theme, "text")}" font-size="11" font-weight="600" opacity="${context ? "0.55" : "1"}">${esc(clip(id, Math.floor(w / 6.2)))}</text>` +
+    glyphAt(glyph.body, cx - GLYPH / 2, by + (badgeSize - GLYPH) / 2 + 2, GLYPH, theme) +
+    labelText(label, cx, by + badgeSize + 15, theme, { fontSize: 11, opacity: context ? "0.55" : "1" }) +
     `</g>`
   );
 }
@@ -670,8 +691,8 @@ function glyphAt(body: string, gx: number, gy: number, size: number, theme: Them
 // ---------------------------------------------------------------------------
 
 /** A leaf badge drawn at the origin (0,0), so a transform can place/move it. */
-function originBadge(id: string, role: Role, m: { kind: string; lexicon: string }, theme: Theme, focus: Focus = "app", diff?: string): string {
-  const k = (26 / 24).toFixed(4);
+function originBadge(id: string, role: Role, m: { kind: string; lexicon: string }, theme: Theme, focus: Focus = "app", diff?: string, label = id): string {
+  const k = (GLYPH / 24).toFixed(4);
   const { context, subject } = emphasis(role, focus);
   const dim = role === "plumbing" || context ? ` opacity="0.5"` : "";
   const stroke = subject ? v(theme, "accentStroke") : v(theme, "neutralStroke");
@@ -680,8 +701,8 @@ function originBadge(id: string, role: Role, m: { kind: string; lexicon: string 
     `<g class="pin-cnode" data-node-id="${esc(id)}"${diff ? ` data-diff="${diff}"` : ""} transform="translate(0,0)" style="opacity:0"${dim}>` +
     `<rect x="-24" y="-24" width="48" height="48" rx="13" fill="${v(theme, "neutralFill")}" stroke="${stroke}" stroke-width="${subject ? 1.8 : 1.4}"/>` +
     `<rect x="-24" y="-24" width="48" height="4" rx="2" fill="${bar}"/>` +
-    `<g transform="translate(-13 -12) scale(${k})" fill="none" stroke="${v(theme, "textFaint")}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${resolveGlyph({ lexicon: m.lexicon, kind: m.kind }).body}</g>` +
-    `<text class="pin-clabel" y="33" text-anchor="middle" fill="${v(theme, "text")}" font-size="10" font-weight="600">${esc(clip(id, 14))}</text>` +
+    `<g transform="translate(${-GLYPH / 2} ${-GLYPH / 2 + 2}) scale(${k})" fill="none" stroke="${v(theme, "textFaint")}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${resolveGlyph({ lexicon: m.lexicon, kind: m.kind }).body}</g>` +
+    labelText(label, 0, 34, theme, { cls: "pin-clabel", fontSize: 10 }) +
     `</g>`
   );
 }
@@ -837,9 +858,9 @@ function renderStatesArtifact(
   expandIndex: Record<string, number>,
   metaNodes: Array<{ id: string; kind: string; lexicon: string; attrs?: unknown }>,
   subtitleOf: (id: string) => string | undefined,
-  o: { theme: Theme; title: string; focus: Focus; startState: number; hint: string; denseState: number; diffOf?: (id: string) => string | undefined },
+  o: { theme: Theme; title: string; focus: Focus; startState: number; hint: string; denseState: number; diffOf?: (id: string) => string | undefined; labelOf?: (id: string) => string },
 ): string {
-  const { theme, title, focus, startState, hint, denseState, diffOf } = o;
+  const { theme, title, focus, startState, hint, denseState, diffOf, labelOf } = o;
   const center = (L: Layout, id: string) => ({ x: Math.round(L.X[id] + L.W[id] / 2), y: Math.round(L.Y[id] + L.H[id] / 2) });
 
   // Pass 1 — lay out each variant; collect which ids are boxes vs leaves anywhere.
@@ -868,7 +889,7 @@ function renderStatesArtifact(
   const states = laid.map(({ a, L, roots }) => {
     let boxesHtml = "";
     const walk = (id: string): void => {
-      if (isBox(id, a.children, a.role)) boxesHtml += box(id, L, a.role[id], a.meta[id], theme, subtitleOf(id), diffOf?.(id));
+      if (isBox(id, a.children, a.role)) boxesHtml += box(id, L, a.role[id], a.meta[id], theme, subtitleOf(id), diffOf?.(id), labelOf?.(id));
       (a.children[id] ?? []).forEach(walk);
     };
     roots.forEach(walk);
@@ -888,7 +909,7 @@ function renderStatesArtifact(
     return { boxes: boxesHtml, edges: edgesHtml, pos };
   });
   const stateMeta = states.map((s, i) => ({ ...s, dense: i === denseState }));
-  const badges = badgeIds.map((id) => originBadge(id, roleOf[id], metaOf[id], theme, focus, diffOf?.(id))).join("");
+  const badges = badgeIds.map((id) => originBadge(id, roleOf[id], metaOf[id], theme, focus, diffOf?.(id), labelOf?.(id))).join("");
 
   const META: Record<string, { kind: string; lexicon: string; attrs: unknown }> = {};
   for (const n of metaNodes) META[n.id] = { kind: n.kind, lexicon: n.lexicon, attrs: n.attrs };
@@ -1080,9 +1101,20 @@ export function renderTiersApp(composites: GraphIR, members: GraphIR, opts: Cont
     const n = membersOf[id]?.length;
     return n ? `${n} resources` : subtitleFor(id, members);
   };
+  // Inside a drilled composite every member repeats the composite's name
+  // (`appService`, `appTaskDef`); strip it for display so the label is short and
+  // non-redundant (`Service`, `TaskDef`) — you already know which box you're in.
+  const labelMap: Record<string, string> = {};
+  for (const [c, mem] of Object.entries(membersOf)) {
+    for (const m of mem) {
+      const rest = m.length > c.length && m.toLowerCase().startsWith(c.toLowerCase()) ? m.slice(c.length) : "";
+      if (/^[A-Z]/.test(rest)) labelMap[m] = rest;
+    }
+  }
   const diff = opts.diff;
   return renderStatesArtifact(variants, expandIndex, [...composites.nodes, ...members.nodes], subtitleOf, {
     theme, title, focus: "app", startState: 0, denseState: -1,
+    labelOf: (id) => labelMap[id] ?? id,
     diffOf: diff ? (id) => diff[id] : undefined,
     hint: diff
       ? "diff — green added · blue changed · red removed · dim unchanged · click a changed composite to see what changed"
