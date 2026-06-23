@@ -23,6 +23,7 @@ import { resolveGlyph } from "./icons.ts";
 import { clip, esc } from "./paint/svg.ts";
 import { defaultPack, type Role, type Focus, type SaliencePack, type Hints } from "./pack.ts";
 import { isImportSocket } from "./compose.ts";
+import type { DiffStatus } from "./diff.ts";
 
 // The salience taxonomy now lives in a swappable presentation pack (#28); these
 // types are re-exported so existing importers keep working.
@@ -59,6 +60,9 @@ export interface ContainmentOptions {
   pack?: SaliencePack;
   /** Manual overrides: assert roles/edges the IR can't express. */
   hints?: Hints;
+  /** Per-node change status (added/removed/changed/same) — when set, the tier view
+   * paints a diff: added pops green, changed blue, unchanged dims. (See diff.ts.) */
+  diff?: Record<string, DiffStatus>;
 }
 
 interface Layout {
@@ -587,7 +591,7 @@ export function subtitleFor(id: string, ir: GraphIR): string | undefined {
   return parts.length ? parts.join(" · ") : undefined;
 }
 
-function box(id: string, L: Layout, role: Role, m: { kind: string; lexicon: string }, theme: Theme, subtitle?: string): string {
+function box(id: string, L: Layout, role: Role, m: { kind: string; lexicon: string }, theme: Theme, subtitle?: string, diff?: string): string {
   const x = L.X[id];
   const y = L.Y[id];
   const w = L.W[id];
@@ -605,7 +609,7 @@ function box(id: string, L: Layout, role: Role, m: { kind: string; lexicon: stri
     ? `<tspan fill="${v(theme, "textFaint")}" font-weight="400"> stack</tspan>`
     : subtitle && w >= 200 && room > 4 ? `<tspan fill="${v(theme, "textFaint")}" font-weight="400"> · ${esc(clip(subtitle, room))}</tspan>` : "";
   return (
-    `<g data-node-id="${esc(id)}">` +
+    `<g data-node-id="${esc(id)}"${diff ? ` data-diff="${diff}"` : ""}>` +
     `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="14" fill="${v(theme, "neutralFill")}" fill-opacity="${isStack ? "0.25" : "0.5"}" stroke="${stroke}" stroke-width="1.4"${dash}/>` +
     (isStack ? "" : glyphAt(glyph.body, x + 14, y + 7, 18, theme)) +
     `<text x="${x + (isStack ? 16 : 40)}" y="${y + 21}" fill="${v(theme, "text")}" font-size="13" font-weight="700">${esc(clip(label, Math.floor((w - 52) / 7.5)))}${sub}</text>` +
@@ -666,14 +670,14 @@ function glyphAt(body: string, gx: number, gy: number, size: number, theme: Them
 // ---------------------------------------------------------------------------
 
 /** A leaf badge drawn at the origin (0,0), so a transform can place/move it. */
-function originBadge(id: string, role: Role, m: { kind: string; lexicon: string }, theme: Theme, focus: Focus = "app"): string {
+function originBadge(id: string, role: Role, m: { kind: string; lexicon: string }, theme: Theme, focus: Focus = "app", diff?: string): string {
   const k = (26 / 24).toFixed(4);
   const { context, subject } = emphasis(role, focus);
   const dim = role === "plumbing" || context ? ` opacity="0.5"` : "";
   const stroke = subject ? v(theme, "accentStroke") : v(theme, "neutralStroke");
   const bar = subject ? v(theme, "accentBar") : v(theme, "neutralBar");
   return (
-    `<g class="pin-cnode" data-node-id="${esc(id)}" transform="translate(0,0)" style="opacity:0"${dim}>` +
+    `<g class="pin-cnode" data-node-id="${esc(id)}"${diff ? ` data-diff="${diff}"` : ""} transform="translate(0,0)" style="opacity:0"${dim}>` +
     `<rect x="-24" y="-24" width="48" height="48" rx="13" fill="${v(theme, "neutralFill")}" stroke="${stroke}" stroke-width="${subject ? 1.8 : 1.4}"/>` +
     `<rect x="-24" y="-24" width="48" height="4" rx="2" fill="${bar}"/>` +
     `<g transform="translate(-13 -12) scale(${k})" fill="none" stroke="${v(theme, "textFaint")}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${resolveGlyph({ lexicon: m.lexicon, kind: m.kind }).body}</g>` +
@@ -833,9 +837,9 @@ function renderStatesArtifact(
   expandIndex: Record<string, number>,
   metaNodes: Array<{ id: string; kind: string; lexicon: string; attrs?: unknown }>,
   subtitleOf: (id: string) => string | undefined,
-  o: { theme: Theme; title: string; focus: Focus; startState: number; hint: string; denseState: number },
+  o: { theme: Theme; title: string; focus: Focus; startState: number; hint: string; denseState: number; diffOf?: (id: string) => string | undefined },
 ): string {
-  const { theme, title, focus, startState, hint, denseState } = o;
+  const { theme, title, focus, startState, hint, denseState, diffOf } = o;
   const center = (L: Layout, id: string) => ({ x: Math.round(L.X[id] + L.W[id] / 2), y: Math.round(L.Y[id] + L.H[id] / 2) });
 
   // Pass 1 — lay out each variant; collect which ids are boxes vs leaves anywhere.
@@ -864,7 +868,7 @@ function renderStatesArtifact(
   const states = laid.map(({ a, L, roots }) => {
     let boxesHtml = "";
     const walk = (id: string): void => {
-      if (isBox(id, a.children, a.role)) boxesHtml += box(id, L, a.role[id], a.meta[id], theme, subtitleOf(id));
+      if (isBox(id, a.children, a.role)) boxesHtml += box(id, L, a.role[id], a.meta[id], theme, subtitleOf(id), diffOf?.(id));
       (a.children[id] ?? []).forEach(walk);
     };
     roots.forEach(walk);
@@ -884,7 +888,7 @@ function renderStatesArtifact(
     return { boxes: boxesHtml, edges: edgesHtml, pos };
   });
   const stateMeta = states.map((s, i) => ({ ...s, dense: i === denseState }));
-  const badges = badgeIds.map((id) => originBadge(id, roleOf[id], metaOf[id], theme, focus)).join("");
+  const badges = badgeIds.map((id) => originBadge(id, roleOf[id], metaOf[id], theme, focus, diffOf?.(id))).join("");
 
   const META: Record<string, { kind: string; lexicon: string; attrs: unknown }> = {};
   for (const n of metaNodes) META[n.id] = { kind: n.kind, lexicon: n.lexicon, attrs: n.attrs };
@@ -1076,9 +1080,13 @@ export function renderTiersApp(composites: GraphIR, members: GraphIR, opts: Cont
     const n = membersOf[id]?.length;
     return n ? `${n} resources` : subtitleFor(id, members);
   };
+  const diff = opts.diff;
   return renderStatesArtifact(variants, expandIndex, [...composites.nodes, ...members.nodes], subtitleOf, {
     theme, title, focus: "app", startState: 0, denseState: -1,
-    hint: "click a composite to drill into the resources it declares · click again to collapse",
+    diffOf: diff ? (id) => diff[id] : undefined,
+    hint: diff
+      ? "diff — green added · blue changed · red removed · dim unchanged · click a changed composite to see what changed"
+      : "click a composite to drill into the resources it declares · click again to collapse",
   });
 }
 
@@ -1144,6 +1152,14 @@ const CONTAIN_CSS = `<style>
   .pin-cnode:hover { filter: drop-shadow(0 0 6px var(--pin-accentBar, #4C8DFF)); }
   .pin-stage.pin-dense .pin-clabel { display: none; } /* dense (network) view: icon-only, label on hover */
   .pin-implied { opacity: .75; }
+  /* Change diff: added pops green, changed blue, removed red+dashed, unchanged dims. */
+  [data-diff="same"] { opacity: .38; }
+  [data-diff="added"] rect { stroke: var(--pin-goodBar, #43DC94) !important; stroke-width: 2 !important; }
+  [data-diff="added"] text, [data-diff="added"] .pin-clabel { fill: var(--pin-goodBar, #43DC94); }
+  [data-diff="changed"] rect { stroke: var(--pin-accentBar, #4C8DFF) !important; stroke-width: 2 !important; }
+  [data-diff="changed"] text, [data-diff="changed"] .pin-clabel { fill: var(--pin-accentBar, #4C8DFF); }
+  [data-diff="removed"] { opacity: .55; }
+  [data-diff="removed"] rect { stroke: var(--pin-warnBar, #FF5A5F) !important; stroke-dasharray: 4 4 !important; }
   #pin-boxes [data-node-id] { cursor: pointer; }
   #pin-boxes [data-node-id]:hover rect { stroke: var(--pin-accentBar, #4C8DFF); }
   .pin-edge-line { transition: opacity .3s ease; }
