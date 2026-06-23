@@ -119,7 +119,7 @@ const PAGE_CSS = `<style>
     border: 1px solid var(--pin-neutralStroke, #252C38);
     border-radius: 6px; padding: 4px 8px;
   }
-  .pin-stage { padding: 16px; }
+  .pin-stage { padding: 16px; display: flex; justify-content: center; align-items: flex-start; }
   .pin-stage svg { max-width: 100%; height: auto; display: block; }
   .pin-stage [data-node-id], .pin-stage [data-edge-from] { cursor: pointer; }
   .pin-stage .pin-sel { filter: drop-shadow(0 0 6px var(--pin-accentBar, #4C8DFF)); }

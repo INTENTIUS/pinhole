@@ -4,7 +4,7 @@ import { getTheme } from "./theme.ts";
 import { renderSvg, cardSizes } from "./paint/render.ts";
 import { renderHtml } from "./html.ts";
 import { renderMorphHtml, type MorphView } from "./morph.ts";
-import { renderContainment, renderContainmentApp, type Focus, type Hints } from "./containment.ts";
+import { renderContainment, renderContainmentApp, renderTiersApp, type Focus, type Hints } from "./containment.ts";
 import { composeStacks, shortStackNames } from "./compose.ts";
 import type { GraphIR } from "./ir.ts";
 import { summarizeIr, describeText } from "./inspect.ts";
@@ -246,6 +246,11 @@ async function runRender(args: string[]): Promise<number> {
     if (stackCount > 1 || irFiles.length || !dir) {
       return fail(new Error("multiple stacks / --ir need --containment (the card view lays out one project via chant)"), json);
     }
+    // Default to the *composite* tier (the declarations the author actually wrote
+    // — `FargateAlb`, `VpcDefault`), not chant's full CloudFormation expansion.
+    // pinhole renders chant at the altitude it was authored; detail tiers are the
+    // zoom. Pass `--detail 2|3` to drill down to declarables/attributes.
+    if (opts.detail === undefined) opts.detail = 1;
     const ir = await graphIr(dir, opts);
     // Otherwise measure each node's card, lay out with those sizes, and paint.
     const svg = renderSvg(ir, await graphLayout(dir, opts, cardSizes(ir, { style })), {
@@ -256,7 +261,15 @@ async function runRender(args: string[]): Promise<number> {
       animate: { pulse, flow },
     });
     if (html) {
-      await writeFile(html, renderHtml(ir, svg, { title, theme }));
+      // The interactive artifact is a tier-zoom: composites at this altitude,
+      // drilling into the next detail tier's resources in place. (At the deepest
+      // tier there's nothing to drill into — fall back to the flat card artifact.)
+      if ((opts.detail ?? 1) < 3) {
+        const members = await graphIr(dir, { ...opts, detail: (opts.detail ?? 1) + 1 });
+        await writeFile(html, renderTiersApp(ir, members, { title, theme }));
+      } else {
+        await writeFile(html, renderHtml(ir, svg, { title, theme }));
+      }
       note(html);
     }
     if (out) {
