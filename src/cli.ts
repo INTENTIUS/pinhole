@@ -5,6 +5,7 @@ import { renderSvg, cardSizes } from "./paint/render.ts";
 import { renderHtml } from "./html.ts";
 import { renderMorphHtml, type MorphView } from "./morph.ts";
 import { renderContainment, renderContainmentApp, renderTiersApp, type Focus, type Hints } from "./containment.ts";
+import { diffTiers, unionGraph, deltaSummary } from "./diff.ts";
 import { composeStacks, shortStackNames } from "./compose.ts";
 import type { GraphIR } from "./ir.ts";
 import { summarizeIr, describeText } from "./inspect.ts";
@@ -158,6 +159,7 @@ async function runRender(args: string[]): Promise<number> {
   let pulse: string[] | undefined;
   let flow = false;
   let json = false;
+  let diffDir: string | undefined; // the "before" project to diff the render against
   const opts: GraphOptions = {};
 
   for (let i = 0; i < args.length; i++) {
@@ -177,6 +179,7 @@ async function runRender(args: string[]): Promise<number> {
     else if (a === "--flow") flow = true;
     else if (a === "--json") json = true;
     else if (a === "--detail") opts.detail = Number(args[++i]);
+    else if (a === "--diff") diffDir = args[++i];
     else if (a === "--lens") opts.lens = args[++i];
     else if (a === "--up") opts.up = true;
     else if (a === "--down") opts.down = true;
@@ -264,9 +267,23 @@ async function runRender(args: string[]): Promise<number> {
       // The interactive artifact is a tier-zoom: composites at this altitude,
       // drilling into the next detail tier's resources in place. (At the deepest
       // tier there's nothing to drill into — fall back to the flat card artifact.)
-      if ((opts.detail ?? 1) < 3) {
+      const deepEnough = (opts.detail ?? 1) < 3;
+      if (deepEnough) {
         const members = await graphIr(dir, { ...opts, detail: (opts.detail ?? 1) + 1 });
-        await writeFile(html, renderTiersApp(ir, members, { title, theme }));
+        if (diffDir) {
+          // --diff: classify this graph against a "before" project and paint the
+          // delta (added/changed/removed/unchanged), member changes rolled up to
+          // their composite. Render the *union* so removed nodes still show.
+          const [bComp, bMem] = await Promise.all([graphIr(diffDir, opts), graphIr(diffDir, { ...opts, detail: (opts.detail ?? 1) + 1 })]);
+          const d = diffTiers(bComp, ir, bMem, members);
+          const uComp = unionGraph(bComp, ir), uMem = unionGraph(bMem, members);
+          for (const node of [...uComp.nodes, ...uMem.nodes]) {
+            if (d.deltas[node.id]?.length) (node.attrs as Record<string, unknown>)["Δ changed"] = deltaSummary(d.deltas[node.id]);
+          }
+          await writeFile(html, renderTiersApp(uComp, uMem, { title, theme, diff: d.status }));
+        } else {
+          await writeFile(html, renderTiersApp(ir, members, { title, theme }));
+        }
       } else {
         await writeFile(html, renderHtml(ir, svg, { title, theme }));
       }
