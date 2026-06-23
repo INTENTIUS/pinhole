@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { roleForKind, renderContainment, containmentNotes, renderContainmentApp, subtitleFor } from "./containment.ts";
+import { roleForKind, renderContainment, containmentNotes, renderContainmentApp, renderTiersApp, subtitleFor } from "./containment.ts";
 import { defaultPack } from "./pack.ts";
 import { composeStacks } from "./compose.ts";
 import type { GraphIR } from "./ir.ts";
@@ -119,6 +119,38 @@ describe("topology — incidental detection from relationship shape", () => {
   it("keeps hubs and multi-dependency subjects (alb, service)", () => {
     expect(t).toContain('data-node-id="alb"');
     expect(t).toContain('data-node-id="svc"');
+  });
+});
+
+describe("headline default — only subjects + places survive (the whiteboard view)", () => {
+  // A subject (service) in a place (VPC), an ingress (ALB), plus the config/glue/
+  // pipeline that supports them (an IAM role, a log group, a CI job).
+  const ir: GraphIR = {
+    nodes: [
+      { id: "vpc", kind: "AWS::EC2::VPC", lexicon: "aws", attrs: {} },
+      { id: "svc", kind: "AWS::ECS::Service", lexicon: "aws", attrs: {} },
+      { id: "alb", kind: "AWS::ElasticLoadBalancingV2::LoadBalancer", lexicon: "aws", attrs: {} },
+      { id: "role", kind: "AWS::IAM::Role", lexicon: "aws", attrs: {} },
+      { id: "logs", kind: "AWS::Logs::LogGroup", lexicon: "aws", attrs: {} },
+      { id: "job", kind: "GitLab::CI::Job", lexicon: "gitlab", attrs: {} },
+    ],
+    edges: [
+      { from: "svc", to: "vpc", kind: "ref", viaAttr: "VpcId" },
+      { from: "svc", to: "role", kind: "ref", viaAttr: "Role" },
+      { from: "svc", to: "logs", kind: "ref", viaAttr: "LogGroup" },
+    ],
+    groups: {},
+  };
+  const s = renderContainment(ir, {});
+
+  it("keeps the subjects (workload, ingress) and their place", () => {
+    expect(s).toContain('data-node-id="vpc"');
+    expect(s).toContain('data-node-id="svc"');
+    expect(s).toContain('data-node-id="alb"');
+  });
+
+  it("folds config, glue, and pipeline into drill-down — not drawn as cards", () => {
+    for (const id of ["role", "logs", "job"]) expect(s).not.toContain(`data-node-id="${id}"`);
   });
 });
 
@@ -384,10 +416,10 @@ describe("byStack boundary boxes (#42 / chant#513 phase 1)", () => {
     nodes: [
       { id: "vpc", kind: "AWS::EC2::VPC", lexicon: "aws", attrs: {} },
       { id: "web", kind: "AWS::EC2::Instance", lexicon: "aws", attrs: {} },
-      { id: "ci", kind: "GitLab::CI::Job", lexicon: "gitlab", attrs: {} },
+      { id: "deploy", kind: "GitLab::Deployment", lexicon: "gitlab", attrs: {} },
     ],
     edges: [{ from: "web", to: "vpc", kind: "ref", viaAttr: "VpcId" }],
-    groups: { byStack: { aws: ["vpc", "web"], gitlab: ["ci"] } },
+    groups: { byStack: { aws: ["vpc", "web"], gitlab: ["deploy"] } },
   };
 
   it("wraps each stack's resources in a labelled boundary box", () => {
@@ -404,8 +436,8 @@ describe("byStack boundary boxes (#42 / chant#513 phase 1)", () => {
     };
     const within = (a: any, b: any) => a && b && a.x >= b.x - 1 && a.y >= b.y - 1 && a.x + a.w <= b.x + b.w + 1 && a.y + a.h <= b.y + b.h + 1;
     expect(within(rect("vpc"), rect("stack·aws"))).toBe(true);
-    expect(within(rect("ci"), rect("stack·gitlab"))).toBe(true);
-    expect(within(rect("ci"), rect("stack·aws"))).toBe(false);
+    expect(within(rect("deploy"), rect("stack·gitlab"))).toBe(true);
+    expect(within(rect("deploy"), rect("stack·aws"))).toBe(false);
   });
 
   it("does not wrap when there is only one stack (no boundary needed)", () => {
@@ -415,12 +447,18 @@ describe("byStack boundary boxes (#42 / chant#513 phase 1)", () => {
 });
 
 describe("collapsable stack boxes (#45)", () => {
+  // Each stack needs a surviving *subject* to draw a box (the headline view folds
+  // pure glue away): infra exposes a shared ALB (ingress), api runs a service that
+  // imports it.
   const infra = {
-    nodes: [{ id: "cluster", kind: "AWS::ECS::Cluster", lexicon: "aws", attrs: {} }],
-    edges: [], groups: {}, exports: [{ name: "ClusterArn", node: "cluster", attr: "Arn" }],
+    nodes: [{ id: "alb", kind: "AWS::ElasticLoadBalancingV2::LoadBalancer", lexicon: "aws", attrs: {} }],
+    edges: [], groups: {}, exports: [{ name: "AlbArn", node: "alb", attr: "Arn" }],
   } as unknown as GraphIR;
   const api: GraphIR = {
-    nodes: [{ id: "clusterArn", kind: "AWS::CloudFormation::Parameter", lexicon: "aws", attrs: {} }],
+    nodes: [
+      { id: "svc", kind: "AWS::ECS::Service", lexicon: "aws", attrs: {} },
+      { id: "albArn", kind: "AWS::CloudFormation::Parameter", lexicon: "aws", attrs: {} },
+    ],
     edges: [], groups: {},
   };
   const merged = composeStacks([{ name: "infra", ir: infra }, { name: "api", ir: api }]);
@@ -436,7 +474,74 @@ describe("collapsable stack boxes (#45)", () => {
 
   it("folding a stack drops its contents and re-anchors its cross-stack edges to the folded box", () => {
     const folded = STATES[EXPAND["stack·infra"]];
-    expect(folded.boxes).not.toContain("infra/cluster"); // contents folded away
-    expect(folded.edges).toContain('data-edge-to="stack·infra"'); // the api→infra/cluster edge re-anchors
+    expect(folded.boxes).not.toContain("infra/alb"); // contents folded away
+    expect(folded.edges).toContain('data-edge-to="stack·infra"'); // the api→infra/alb import re-anchors
+  });
+});
+
+describe("renderTiersApp — composite tier-zoom (render chant's altitude, drill on demand)", () => {
+  // What the author wrote: two composites with a dependency. Each expands to the
+  // declarables it owns (the next detail tier), tagged by compositeInstance.
+  const composites: GraphIR = {
+    nodes: [
+      { id: "app", kind: "FargateAlb", lexicon: "aws", attrs: {} },
+      { id: "net", kind: "VpcDefault", lexicon: "aws", attrs: {} },
+    ],
+    edges: [{ from: "app", to: "net", kind: "ref", viaAttr: "vpcId" }],
+    groups: {},
+  };
+  const members: GraphIR = {
+    nodes: [
+      { id: "appService", kind: "AWS::ECS::Service", lexicon: "aws", attrs: {}, compositeInstance: "app" },
+      { id: "appCluster", kind: "AWS::ECS::Cluster", lexicon: "aws", attrs: {}, compositeInstance: "app" },
+      { id: "netVpc", kind: "AWS::EC2::VPC", lexicon: "aws", attrs: {}, compositeInstance: "net" },
+    ],
+    edges: [{ from: "appService", to: "appCluster", kind: "ref", viaAttr: "Cluster" }],
+    groups: {},
+  };
+  const app = renderTiersApp(composites, members, {});
+  const script = app.match(/<script>([\s\S]*?)<\/script>/)![1].replace(/\\u003c/g, "<");
+  const EXPAND = JSON.parse(script.match(/const EXPAND = (\{[\s\S]*?\});\n/)![1]);
+  const STATES = JSON.parse(script.match(/const STATES = (\[[\s\S]*?\]);\n/)![1]);
+
+  it("defaults to the composite altitude — the declarations the author wrote", () => {
+    expect(STATES[0].boxes).toContain('data-node-id="app"');
+    expect(STATES[0].boxes).toContain('data-node-id="net"');
+    // members are not on the canvas until you drill in
+    expect(STATES[0].pos.appService).toBeUndefined();
+  });
+
+  it("makes each composite drillable into the resources it declares", () => {
+    expect("app" in EXPAND).toBe(true);
+    expect("net" in EXPAND).toBe(true);
+    const drilled = STATES[EXPAND.app];
+    expect(drilled.pos.appService).toBeTruthy(); // member laid out inside app
+    expect(drilled.pos.appCluster).toBeTruthy();
+    expect(drilled.pos.netVpc).toBeUndefined(); // other composite stays collapsed
+  });
+
+  it("infers containment structurally — a grouping ref nests, a one-off dependency ref doesn't", () => {
+    const comp: GraphIR = { nodes: [{ id: "net", kind: "VpcDefault", lexicon: "aws", attrs: {} }], edges: [], groups: {} };
+    const mem: GraphIR = {
+      nodes: [
+        { id: "vpc", kind: "AWS::EC2::VPC", lexicon: "aws", attrs: {}, compositeInstance: "net" },
+        { id: "sub1", kind: "AWS::EC2::Subnet", lexicon: "aws", attrs: {}, compositeInstance: "net" },
+        { id: "sub2", kind: "AWS::EC2::Subnet", lexicon: "aws", attrs: {}, compositeInstance: "net" },
+        { id: "nat", kind: "AWS::EC2::NatGateway", lexicon: "aws", attrs: {}, compositeInstance: "net" },
+      ],
+      edges: [
+        { from: "sub1", to: "vpc", kind: "ref", viaAttr: "VpcId" }, // VpcId groups 2 subnets → containment
+        { from: "sub2", to: "vpc", kind: "ref", viaAttr: "VpcId" },
+        { from: "nat", to: "sub1", kind: "ref", viaAttr: "SubnetId" }, // one-off → dependency, not nesting
+      ],
+      groups: {},
+    };
+    const out = renderTiersApp(comp, mem, {});
+    const sc = out.match(/<script>([\s\S]*?)<\/script>/)![1].replace(/\\u003c/g, "<");
+    const EX = JSON.parse(sc.match(/const EXPAND = (\{[\s\S]*?\});\n/)![1]);
+    const ST = JSON.parse(sc.match(/const STATES = (\[[\s\S]*?\]);\n/)![1]);
+    const d = ST[EX.net];
+    expect(d.boxes).toContain('data-node-id="vpc"'); // grouping ref → the VPC is a bounding box
+    expect(d.boxes).not.toContain('data-node-id="sub1"'); // one child via SubnetId ≠ a container; sub1 stays a leaf
   });
 });

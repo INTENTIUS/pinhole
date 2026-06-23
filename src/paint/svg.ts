@@ -51,8 +51,11 @@ export class Canvas {
 
   constructor(w: number, h: number, theme: Theme) {
     this.theme = theme;
+    // Emit an intrinsic pixel size (not just a viewBox) so the artifact's
+    // `max-width:100%` scales a *large* graph down to fit but never blows a small
+    // one (e.g. a 2-node composite view) up to fill the page.
     this.body +=
-      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" ` +
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" ` +
       `font-family="'Inter','SF Pro Display',system-ui,-apple-system,'Segoe UI',sans-serif">`;
     this.body += defs(theme);
     this.body += `<rect width="${w}" height="${h}" fill="url(#pin-bg)"/>`;

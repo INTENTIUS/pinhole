@@ -22,6 +22,7 @@ import { getTheme, v, defs, THEMES, type Theme } from "./theme.ts";
 import { resolveGlyph } from "./icons.ts";
 import { clip, esc } from "./paint/svg.ts";
 import { defaultPack, type Role, type Focus, type SaliencePack, type Hints } from "./pack.ts";
+import { isImportSocket } from "./compose.ts";
 
 // The salience taxonomy now lives in a swappable presentation pack (#28); these
 // types are re-exported so existing importers keep working.
@@ -77,13 +78,22 @@ interface Analysis {
   meta: Record<string, { kind: string; lexicon: string }>;
   parent: Record<string, string>;
   children: Record<string, string[]>;
-  depEdges: Array<{ from: string; to: string; via?: string; toAttr?: string }>;
+  depEdges: Array<{ from: string; to: string; via?: string; toAttr?: string; label?: string }>;
   /** Edges the IR doesn't carry but a composite implies (an ALB fronts the
    * service it was created with) — drawn as a hint, distinct from real refs. */
   implied: Array<{ from: string; to: string }>;
   /** place id → plumbing ids that live in it (dropped from the diagram). */
   hidden: Record<string, string[]>;
+  /** Kept nodes that are cross-stack import sockets. (See {@link isImportSocket}.) */
+  ports: Set<string>;
+  /** node id → the nearest kept place it belongs to (folded nodes included). */
+  placeHome: Record<string, string>;
 }
+
+/** A kept leaf that is a cross-stack import socket (a CloudFormation Parameter):
+ * rendered as a compact pin on the stack's leading edge, not a full card. */
+const isPort = (id: string, meta: Record<string, { kind: string }>): boolean =>
+  meta[id] != null && isImportSocket(meta[id].kind);
 
 /** Salience + containment of an IR.
  *
@@ -149,10 +159,9 @@ function analyze(ir: GraphIR, focus: Focus = "app", pack: SaliencePack = default
   // full kind — otherwise a namespace like "ElasticLoadBalancingV2" makes every
   // sub-resource (listener, target group) match the ingress rule "loadbalanc".
   const typeOf = (id: string): string => (meta[id].kind.split("::").pop() ?? meta[id].kind).toLowerCase();
-  const protectedSubject = (id: string): boolean =>
-    overridden.has(id) ||
-    typeOf(id) === "parameter" || // a cross-stack import socket — the anchor for an inter-stack edge
+  const isSubject = (id: string): boolean =>
     pack.ingress.test(typeOf(id)) || pack.workload.test(typeOf(id)) || pack.valuable.test(typeOf(id));
+  const protectedSubject = (id: string): boolean => overridden.has(id) || isSubject(id);
   for (let changed = true; changed; ) {
     changed = false;
     const di: Record<string, number> = {};
@@ -176,6 +185,20 @@ function analyze(ir: GraphIR, focus: Focus = "app", pack: SaliencePack = default
       const parked = inDeg === 0 && (dout[id] ?? 0) === 0 && placed.has(id);
       if (singleAttach || parked) { role[id] = "plumbing"; kept.delete(id); changed = true; }
     }
+  }
+
+  // Headline default: a diagram should show the *subjects* (what serves traffic,
+  // what runs, what stores data) inside their *places* (network/compute
+  // boundaries) — not the config/glue/wiring that supports them. So fold every
+  // remaining kept "thing" that isn't a subject into the place/subject that hosts
+  // it; it stays recoverable on drill-down (and `--focus network|security`
+  // re-promotes its layer). This is what turns dozens of resource cards into the
+  // handful you'd draw on a whiteboard. Places and (security-focus) policies stay;
+  // manually-kept nodes (hints) are authoritative.
+  for (const n of ir.nodes) {
+    const id = n.id;
+    if (!kept.has(id) || overridden.has(id) || role[id] === "place" || role[id] === "policy") continue;
+    if (!isSubject(id)) { role[id] = "plumbing"; kept.delete(id); }
   }
 
   // Where each node nests: its lives-in target, or (failing that) what it spans.
@@ -206,6 +229,11 @@ function analyze(ir: GraphIR, focus: Focus = "app", pack: SaliencePack = default
     const h = homeOf(id);
     if (h && h !== id) parent[id] = h;
   }
+  // The kept place every node belongs to — *including folded ones* (a collapsed
+  // subnet still belongs to its VPC). Lets a cross-stack import that points at
+  // folded glue re-anchor to the surviving place it lives in.
+  const placeHome: Record<string, string> = {};
+  for (const n of ir.nodes) { const h = homeOf(n.id); if (h) placeHome[n.id] = h; }
 
   // A composite's members with no network home gather into a sub-box, nested in
   // the place its networked siblings anchor to.
@@ -278,7 +306,54 @@ function analyze(ir: GraphIR, focus: Focus = "app", pack: SaliencePack = default
     const home = h && kept.has(h) ? h : inst && kept.has(inst) ? inst : inst ? anchor[inst] : undefined;
     if (home && kept.has(home)) (hidden[home] = hidden[home] || []).push(n.id);
   }
-  return { role, kept, meta, parent, children, depEdges, implied, hidden };
+  const ports = new Set<string>([...kept].filter((id) => isPort(id, meta)));
+  return { role, kept, meta, parent, children, depEdges, implied, hidden, ports, placeHome };
+}
+
+/**
+ * Reconnect the composition across stacks. In the headline view a cross-stack
+ * import socket (a Parameter) has already folded — it was never a subject. But
+ * the *relationship* it carried is signal: it says this stack uses a shared place
+ * or subject in another stack (`api` runs on the shared cluster, sits in the
+ * shared VPC). So for each import we draw one edge from the consuming **stack
+ * box** to the kept place/subject the import resolves to — re-anchoring through
+ * folded glue (`privateSubnet1` → its VPC, never the bare subnet). Imports that
+ * resolve only to folded detail (an execution role, a security group) carry no
+ * architectural signal and are dropped. Edges are **bundled per target** — three
+ * subnet/vpc imports to one VPC read as a single labeled link, not a fan of
+ * parallel lines.
+ *
+ * `importPairs` are the raw `param → producer` edges from the IR (compose.ts
+ * marks them `viaAttr: "import"`). Pure; a lone stack (no boxes) is a no-op. */
+function liftImportsToEdges(a: Analysis, importPairs: Array<{ from: string; to: string }>, byStack: Record<string, string[]>): Analysis {
+  const stackOf: Record<string, string> = {};
+  for (const [s, ids] of Object.entries(byStack)) for (const id of ids) stackOf[id] = s;
+  // The kept place/subject a producer resolves to: itself if kept, else the kept
+  // place it lives in. (Folded glue with no place — a role, an SG — resolves to
+  // nothing and its import is dropped.)
+  const anchorOf = (id: string): string | undefined =>
+    a.kept.has(id) ? id : a.kept.has(a.placeHome[id]) ? a.placeHome[id] : undefined;
+
+  // Bundle imports by (consuming stack box → resolved target); collect the names.
+  const bundle = new Map<string, { from: string; to: string; labels: string[] }>();
+  for (const { from: param, to: producer } of importPairs) {
+    const s = stackOf[param];
+    const box = s != null ? stackBoxId(s) : undefined;
+    const target = anchorOf(producer);
+    if (!box || !a.kept.has(box) || !target || target === box) continue;
+    const key = `${box}>${target}`;
+    const b = bundle.get(key) ?? { from: box, to: target, labels: [] };
+    if (!b.labels.includes(portLabel(param))) b.labels.push(portLabel(param));
+    bundle.set(key, b);
+  }
+  if (bundle.size === 0) return a;
+
+  const depEdges: Analysis["depEdges"] = [...a.depEdges];
+  for (const b of bundle.values()) {
+    const label = b.labels.length <= 2 ? b.labels.join(", ") : `${b.labels.slice(0, 2).join(", ")} +${b.labels.length - 2}`;
+    depEdges.push({ from: b.from, to: b.to, via: "import", label });
+  }
+  return { ...a, depEdges };
 }
 
 /** Wrap each top-level root in a synthetic boundary box for its deployable stack
@@ -345,7 +420,7 @@ function collapseStack(a: Analysis, stackBox: string): Analysis {
   const keep = (e: { from: string; to: string }): boolean => e.from !== e.to && kept.has(e.from) && kept.has(e.to);
   const depEdges = a.depEdges.map((e) => ({ ...e, from: anchor(e.from), to: anchor(e.to) })).filter(keep);
   const seen = new Set<string>();
-  const dedup = depEdges.filter((e) => { const k = `${e.from}>${e.to}>${e.via ?? ""}`; if (seen.has(k)) return false; seen.add(k); return true; });
+  const dedup = depEdges.filter((e) => { const k = `${e.from}>${e.to}>${e.label ?? e.via ?? ""}`; if (seen.has(k)) return false; seen.add(k); return true; });
   const implied = a.implied.map((e) => ({ from: anchor(e.from), to: anchor(e.to) })).filter(keep);
 
   return { ...a, kept, children, parent, depEdges: dedup, implied };
@@ -445,7 +520,8 @@ function computeLayout(
 export function renderContainment(ir: GraphIR, opts: ContainmentOptions = {}): string {
   const theme = opts.theme ?? getTheme();
   const focus = opts.focus ?? "app";
-  const { role, kept, meta, parent, children, depEdges, implied } = withStackBoxes(analyze(ir, focus, opts.pack, opts.hints), ir.groups.byStack);
+  const importPairs = ir.edges.filter((e) => e.viaAttr === "import").map((e) => ({ from: e.from, to: e.to }));
+  const { role, kept, meta, parent, children, depEdges, implied } = liftImportsToEdges(withStackBoxes(analyze(ir, focus, opts.pack, opts.hints), ir.groups.byStack), importPairs, ir.groups.byStack ?? {});
   const roots = [...kept].filter((id) => !parent[id]).sort();
   const { L, canvasW, canvasH } = computeLayout(roots, children, role);
 
@@ -465,7 +541,7 @@ export function renderContainment(ir: GraphIR, opts: ContainmentOptions = {}): s
   const obstacleIds = [...kept].filter((id) => id in L.X);
   const route = (from: string, to: string): string => routeEdge(from, to, L, obstaclesFor(from, to, obstacleIds, L, parent));
   let lines = "";
-  for (const e of depEdges) lines += depEdgeStr(e.from, e.to, route(e.from, e.to), e.via, e.toAttr, theme);
+  for (const e of depEdges) lines += depEdgeStr(e.from, e.to, route(e.from, e.to), e.via, e.toAttr, theme, false, e.label, edgeLabelPos(e.from, e.to, L));
   for (const e of implied) lines += depEdgeStr(e.from, e.to, route(e.from, e.to), undefined, undefined, theme, true);
 
   return (
@@ -544,6 +620,10 @@ function emphasis(role: Role, focus: Focus): { context: boolean; subject: boolea
   if (focus === "security") return { context: role === "thing", subject: role === "policy" };
   return { context: role === "policy", subject: false };
 }
+
+/** The short name an import reads by: the bare parameter, sans stack prefix
+ * (`api/vpcId` → `vpcId`). */
+const portLabel = (id: string): string => id.slice(id.lastIndexOf("/") + 1);
 
 /** A leaf node (thing/policy): glyph badge + a label below it. */
 function badge(id: string, L: Layout, role: Role, m: { kind: string; lexicon: string }, theme: Theme, focus: Focus = "app"): string {
@@ -698,23 +778,308 @@ function obstaclesFor(from: string, to: string, ids: string[], L: Layout, parent
   return ids.filter((id) => !skip.has(id) && id in L.X).map((id) => rectOf(L, id));
 }
 
-function depEdgeStr(from: string, to: string, d: string, via: string | undefined, toAttr: string | undefined, theme: Theme, implied = false): string {
+/** Midpoint of the line between two laid-out boxes' centres — where an import
+ * edge's name label sits. */
+function edgeLabelPos(from: string, to: string, L: Layout): { x: number; y: number } | undefined {
+  if (!(from in L.X) || !(to in L.X)) return undefined;
+  return { x: (L.X[from] + L.W[from] / 2 + L.X[to] + L.W[to] / 2) / 2, y: (L.Y[from] + L.H[from] / 2 + L.Y[to] + L.H[to] / 2) / 2 };
+}
+
+/** An import edge's name, drawn on the line with a background halo so it reads
+ * over the dotted backdrop. The accent colour marks it as a cross-stack import. */
+function edgeLabel(label: string, p: { x: number; y: number }, theme: Theme): string {
+  return (
+    `<text x="${rnd(p.x)}" y="${rnd(p.y)}" text-anchor="middle" dominant-baseline="middle" ` +
+    `paint-order="stroke" stroke="${v(theme, "bg1")}" stroke-width="3.5" stroke-linejoin="round" ` +
+    `fill="${v(theme, "accentBar")}" font-size="10" font-weight="600" pointer-events="none">${esc(label)}</text>`
+  );
+}
+
+function depEdgeStr(from: string, to: string, d: string, via: string | undefined, toAttr: string | undefined, theme: Theme, implied = false, label?: string, labelPos?: { x: number; y: number }): string {
   const attrs =
     ` data-edge-from="${esc(from)}" data-edge-to="${esc(to)}"` +
     (via ? ` data-edge-via="${esc(via)}"` : "") +
     (toAttr ? ` data-edge-to-attr="${esc(toAttr)}"` : "") +
+    (label ? ` data-edge-import="${esc(label)}"` : "") +
     (implied ? ` data-edge-implied="1"` : "");
-  const stroke = implied ? v(theme, "accentBar") : v(theme, "edge");
-  const dash = implied ? "2 5" : "5 5";
+  // A lifted import reads as the reference it is: accent colour, finer dash.
+  const isImport = label != null;
+  const stroke = implied ? v(theme, "accentBar") : isImport ? v(theme, "accentStroke") : v(theme, "edge");
+  const dash = implied ? "2 5" : isImport ? "1 4" : "5 5";
   const op = implied ? ` opacity="0.75"` : "";
   return (
     `<g${attrs}><path class="pin-edge-line" d="${esc(d)}" fill="none" stroke="${stroke}" stroke-width="1.4" stroke-linecap="round" stroke-dasharray="${dash}"${op}/>` +
-    `<path d="${esc(d)}" fill="none" stroke="transparent" stroke-width="14" stroke-linecap="round" pointer-events="stroke"/></g>`
+    `<path d="${esc(d)}" fill="none" stroke="transparent" stroke-width="14" stroke-linecap="round" pointer-events="stroke"/>` +
+    (label && labelPos ? edgeLabel(label, labelPos, theme) : "") +
+    `</g>`
   );
 }
 
 function jsonScriptC(value: unknown): string {
   return JSON.stringify(value).replace(/</g, "\\u003c");
+}
+
+/**
+ * Render a set of pre-built {@link Analysis} states into the interactive artifact:
+ * lay out each state, draw leaf badges once and glide them (FLIP) between states,
+ * swap the box/edge layers per state. Shared by the salience containment view and
+ * the composite tier-zoom — they differ only in how their states are built.
+ *
+ * `expandIndex` maps a box id → the state index that reveals what it collapsed;
+ * `denseState` is the state index drawn icon-only (label on hover), or -1.
+ */
+function renderStatesArtifact(
+  variants: Analysis[],
+  expandIndex: Record<string, number>,
+  metaNodes: Array<{ id: string; kind: string; lexicon: string; attrs?: unknown }>,
+  subtitleOf: (id: string) => string | undefined,
+  o: { theme: Theme; title: string; focus: Focus; startState: number; hint: string; denseState: number },
+): string {
+  const { theme, title, focus, startState, hint, denseState } = o;
+  const center = (L: Layout, id: string) => ({ x: Math.round(L.X[id] + L.W[id] / 2), y: Math.round(L.Y[id] + L.H[id] / 2) });
+
+  // Pass 1 — lay out each variant; collect which ids are boxes vs leaves anywhere.
+  let maxW = 480;
+  let maxH = 300;
+  const boxAny = new Set<string>();
+  const leafAny = new Set<string>();
+  const metaOf: Record<string, { kind: string; lexicon: string }> = {};
+  const roleOf: Record<string, Role> = {};
+  const laid = variants.map((a) => {
+    const roots = [...a.kept].filter((id) => !a.parent[id]).sort();
+    const { L, canvasW, canvasH } = computeLayout(roots, a.children, a.role);
+    maxW = Math.max(maxW, canvasW);
+    maxH = Math.max(maxH, canvasH);
+    const walk = (id: string): void => {
+      (isBox(id, a.children, a.role) ? boxAny : leafAny).add(id);
+      if (!metaOf[id]) { metaOf[id] = a.meta[id]; roleOf[id] = a.role[id]; }
+      (a.children[id] ?? []).forEach(walk);
+    };
+    roots.forEach(walk);
+    return { a, L, roots };
+  });
+  const badgeIds = [...leafAny].filter((id) => !boxAny.has(id));
+
+  // Pass 2 — per-state box/edge HTML + leaf positions.
+  const states = laid.map(({ a, L, roots }) => {
+    let boxesHtml = "";
+    const walk = (id: string): void => {
+      if (isBox(id, a.children, a.role)) boxesHtml += box(id, L, a.role[id], a.meta[id], theme, subtitleOf(id));
+      (a.children[id] ?? []).forEach(walk);
+    };
+    roots.forEach(walk);
+    const pos: Record<string, { x: number; y: number }> = {};
+    for (const id of badgeIds) if (id in L.X) pos[id] = center(L, id);
+    const obstacleIds = [...a.kept].filter((id) => id in L.X);
+    const route = (from: string, to: string): string => routeEdge(from, to, L, obstaclesFor(from, to, obstacleIds, L, a.parent));
+    let edgesHtml = "";
+    for (const e of a.depEdges) {
+      if (!(e.from in L.X) || !(e.to in L.X)) continue;
+      edgesHtml += depEdgeStr(e.from, e.to, route(e.from, e.to), e.via, e.toAttr, theme, false, e.label, edgeLabelPos(e.from, e.to, L));
+    }
+    for (const e of a.implied) {
+      if (!(e.from in L.X) || !(e.to in L.X)) continue;
+      edgesHtml += depEdgeStr(e.from, e.to, route(e.from, e.to), undefined, undefined, theme, true);
+    }
+    return { boxes: boxesHtml, edges: edgesHtml, pos };
+  });
+  const stateMeta = states.map((s, i) => ({ ...s, dense: i === denseState }));
+  const badges = badgeIds.map((id) => originBadge(id, roleOf[id], metaOf[id], theme, focus)).join("");
+
+  const META: Record<string, { kind: string; lexicon: string; attrs: unknown }> = {};
+  for (const n of metaNodes) META[n.id] = { kind: n.kind, lexicon: n.lexicon, attrs: n.attrs };
+
+  // Per-box drill-down: what each box collapsed, so a click can list it.
+  const drill: Record<string, Array<{ id: string; kind: string }>> = {};
+  for (const a of variants) {
+    for (const [place, ids] of Object.entries(a.hidden)) {
+      const seen = new Set((drill[place] ??= []).map((d) => d.id));
+      for (const hid of ids) if (!seen.has(hid)) { drill[place].push({ id: hid, kind: META[hid]?.kind ?? "" }); seen.add(hid); }
+    }
+  }
+
+  const themeOptions = Object.keys(THEMES).map((n) => `<option value="${esc(n)}"${n === theme.name ? " selected" : ""}>${esc(n)}</option>`).join("");
+
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${Math.ceil(maxW)} ${Math.ceil(maxH)}" ` +
+    `font-family="'Inter','SF Pro Display',system-ui,-apple-system,'Segoe UI',sans-serif">` +
+    defs(theme) +
+    `<rect width="${Math.ceil(maxW)}" height="${Math.ceil(maxH)}" fill="url(#pin-bg)"/>` +
+    `<rect width="${Math.ceil(maxW)}" height="${Math.ceil(maxH)}" fill="url(#pin-dots)" opacity="0.6"/>` +
+    `<text x="60" y="52" fill="${v(theme, "text")}" font-size="22" font-weight="700">${esc(title)}</text>` +
+    `<g id="pin-boxes"></g><g id="pin-edges"></g>${badges}</svg>`;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(title)} · pinhole</title>
+${CONTAIN_CSS}
+</head>
+<body>
+<header class="pin-bar">
+  <h1>${esc(title)}</h1>
+  <span class="pin-hint">${esc(hint)}</span>
+  <label class="pin-theme">theme <select id="pin-theme-select">${themeOptions}</select></label>
+</header>
+<main class="pin-stage" id="pin-stage">${svg}</main>
+<div class="pin-tooltip" id="pin-tooltip" hidden></div>
+<div class="pin-backdrop" id="pin-backdrop" hidden>
+  <aside class="pin-inspector" id="pin-inspector" role="dialog" aria-modal="true">
+    <button class="pin-close" id="pin-close" aria-label="Close inspector">&times;</button>
+    <div id="pin-inspector-body"></div>
+  </aside>
+</div>
+<script>
+const THEMES = ${jsonScriptC(Object.fromEntries(Object.entries(THEMES).map(([k, t]) => [k, t.tokens])))};
+const STATES = ${jsonScriptC(stateMeta)};
+const EXPAND = ${jsonScriptC(expandIndex)};
+const META = ${jsonScriptC(META)};
+const DRILL = ${jsonScriptC(drill)};
+const START = ${startState};
+${CONTAIN_JS}
+</script>
+</body>
+</html>
+`;
+}
+
+/**
+ * The composite **tier-zoom** artifact — the reframe's headline view. Renders the
+ * graph at the altitude the author wrote it (`composites`: `FargateAlb`,
+ * `VpcDefault`), and lets a click drill a composite open to the `members` it
+ * declares (chant's next detail tier), nested in place, then collapse again. No
+ * salience: it draws chant's authored structure, with detail tiers as the zoom.
+ *
+ * `composites` is the IR at the high tier (its nodes are the cards, its edges the
+ * wiring); `members` is the next tier down, whose nodes carry `compositeInstance`
+ * naming which composite they belong to. */
+/** Does a child→parent map contain a cycle? */
+function hasParentCycle(parentOf: Map<string, string>): boolean {
+  for (const start of parentOf.keys()) {
+    let cur: string | undefined = start;
+    const seen = new Set<string>();
+    while (cur !== undefined) {
+      if (seen.has(cur)) return true;
+      seen.add(cur);
+      cur = parentOf.get(cur);
+    }
+  }
+  return false;
+}
+
+/**
+ * Infer which ref attrs denote *containment* ("belongs-to") from the graph shape,
+ * with no kind/attr knowledge. A ref is containment when, among these nodes, it is:
+ *  - **single-valued** — each child points at one parent through it (you live in
+ *    one place; a multi-valued ref like a list of security groups is a relation);
+ *  - **grouping** — some parent gathers ≥2 children through it (a route *table*
+ *    holds several routes), which a mere dependency target (a route's next-hop
+ *    gateway, referenced once) never does;
+ *  - **acyclic** — containment is a hierarchy.
+ * Everything else stays a dependency line.
+ */
+function inferContainmentAttrs(edges: GraphIR["edges"], memSet: Set<string>): Set<string> {
+  const parentOf = new Map<string, Map<string, string>>();
+  const single = new Map<string, boolean>();
+  const childrenOf = new Map<string, Map<string, Set<string>>>();
+  for (const e of edges) {
+    if (!e.viaAttr || e.from === e.to || !memSet.has(e.from) || !memSet.has(e.to)) continue;
+    const a = e.viaAttr;
+    if (!parentOf.has(a)) { parentOf.set(a, new Map()); single.set(a, true); childrenOf.set(a, new Map()); }
+    const pm = parentOf.get(a)!;
+    if (pm.has(e.from) && pm.get(e.from) !== e.to) single.set(a, false); // child points at two parents → a relation, not a home
+    pm.set(e.from, e.to);
+    const km = childrenOf.get(a)!;
+    (km.get(e.to) ?? km.set(e.to, new Set()).get(e.to)!).add(e.from);
+  }
+  const out = new Set<string>();
+  for (const [a, pm] of parentOf) {
+    if (!single.get(a)) continue;
+    if (![...childrenOf.get(a)!.values()].some((s) => s.size >= 2)) continue; // no real grouping
+    if (hasParentCycle(pm)) continue;
+    out.add(a);
+  }
+  return out;
+}
+
+export function renderTiersApp(composites: GraphIR, members: GraphIR, opts: ContainmentOptions = {}): string {
+  const theme = opts.theme ?? getTheme();
+  const title = opts.title ?? "Infrastructure";
+
+  const meta: Record<string, { kind: string; lexicon: string }> = {};
+  for (const n of composites.nodes) meta[n.id] = { kind: n.kind, lexicon: n.lexicon };
+  for (const n of members.nodes) meta[n.id] = { kind: n.kind, lexicon: n.lexicon };
+  const membersOf: Record<string, string[]> = {};
+  for (const n of members.nodes) {
+    const c = (n as { compositeInstance?: string }).compositeInstance;
+    if (c && c !== n.id) (membersOf[c] ??= []).push(n.id);
+  }
+  const compIds = composites.nodes.map((n) => n.id);
+
+  // One state per drill target: state 0 has every composite collapsed (its members
+  // hidden → a card with a count); state k expands one composite's members, nested
+  // by structurally-inferred containment so a VPC boxes its subnets, a route table
+  // its routes — no attr list, no lexicon knowledge (see inferContainmentAttrs).
+  const build = (expanded: string | null): Analysis => {
+    const role: Record<string, Role> = {};
+    const kept = new Set<string>();
+    const parent: Record<string, string> = {};
+    const children: Record<string, string[]> = {};
+    const hidden: Record<string, string[]> = {};
+    for (const c of compIds) { role[c] = "place"; kept.add(c); children[c] = []; }
+    const depEdges: Analysis["depEdges"] = composites.edges.map((e) => ({ from: e.from, to: e.to, via: e.viaAttr, toAttr: e.toAttr }));
+    // would nesting `m` under `t` close a cycle? (t already reaches m as a parent)
+    const reaches = (from: string, target: string): boolean => {
+      let cur: string | undefined = from;
+      const seen = new Set<string>();
+      while (cur !== undefined && !seen.has(cur)) { if (cur === target) return true; seen.add(cur); cur = parent[cur]; }
+      return false;
+    };
+    for (const c of compIds) {
+      const mem = membersOf[c] ?? [];
+      if (expanded !== c) { if (mem.length) hidden[c] = [...mem]; continue; }
+      const memSet = new Set(mem);
+      const nests = inferContainmentAttrs(members.edges, memSet);
+      // first containment ref a member has → the parent it lives in.
+      const nestTarget: Record<string, string> = {};
+      for (const e of members.edges) {
+        if (e.viaAttr && nests.has(e.viaAttr) && memSet.has(e.from) && memSet.has(e.to) && e.from !== e.to && !nestTarget[e.from]) nestTarget[e.from] = e.to;
+      }
+      for (const m of mem) {
+        kept.add(m);
+        const t = nestTarget[m];
+        const home = t && memSet.has(t) && !reaches(t, m) ? t : c; // else hang off the composite box
+        parent[m] = home;
+        (children[home] ??= []).push(m);
+      }
+      for (const m of mem) role[m] = children[m]?.length ? "place" : "thing"; // a container reads as a bounding box
+      // Containment refs became nesting; the remaining (dependency) refs draw as lines.
+      for (const e of members.edges) {
+        if (e.viaAttr && nests.has(e.viaAttr)) continue;
+        if (memSet.has(e.from) && memSet.has(e.to) && e.from !== e.to) depEdges.push({ from: e.from, to: e.to, via: e.viaAttr, toAttr: e.toAttr });
+      }
+    }
+    return { role, kept, meta, parent, children, depEdges, implied: [], hidden, ports: new Set(), placeHome: {} };
+  };
+
+  const variants: Analysis[] = [build(null)];
+  const expandIndex: Record<string, number> = {};
+  for (const c of compIds) {
+    if (!membersOf[c]?.length) continue;
+    expandIndex[c] = variants.length;
+    variants.push(build(c));
+  }
+
+  const subtitleOf = (id: string): string | undefined => {
+    const n = membersOf[id]?.length;
+    return n ? `${n} resources` : subtitleFor(id, members);
+  };
+  return renderStatesArtifact(variants, expandIndex, [...composites.nodes, ...members.nodes], subtitleOf, {
+    theme, title, focus: "app", startState: 0, denseState: -1,
+    hint: "click a composite to drill into the resources it declares · click again to collapse",
+  });
 }
 
 /** Build the interactive expandable containment artifact (offline HTML). */
@@ -729,7 +1094,8 @@ export function renderContainmentApp(ir: GraphIR, opts: ContainmentOptions = {})
   // drawn once and glide between states.
   const focus = opts.focus ?? "app";
   const primaryFocus: Focus = focus === "security" ? "security" : "app";
-  const wrap = (a: Analysis): Analysis => withStackBoxes(a, ir.groups.byStack);
+  const importPairs = ir.edges.filter((e) => e.viaAttr === "import").map((e) => ({ from: e.from, to: e.to }));
+  const wrap = (a: Analysis): Analysis => liftImportsToEdges(withStackBoxes(a, ir.groups.byStack), importPairs, ir.groups.byStack ?? {});
   const primary = wrap(analyze(ir, primaryFocus, opts.pack, opts.hints));
   const variants = [primary, wrap(analyze(ir, "network", opts.pack, opts.hints))];
   const realNodes = new Set(ir.nodes.map((n) => n.id));
@@ -757,123 +1123,10 @@ export function renderContainmentApp(ir: GraphIR, opts: ContainmentOptions = {})
       variants.push(collapseStack(primary, sb));
     }
   }
-  const subtitleOf = (id: string): string | undefined => subtitleFor(id, ir);
-  const center = (L: Layout, id: string) => ({ x: Math.round(L.X[id] + L.W[id] / 2), y: Math.round(L.Y[id] + L.H[id] / 2) });
-
-  // Pass 1 — lay out each variant; collect which ids are boxes vs leaves anywhere.
-  let maxW = 480;
-  let maxH = 300;
-  const boxAny = new Set<string>();
-  const leafAny = new Set<string>();
-  const metaOf: Record<string, { kind: string; lexicon: string }> = {};
-  const roleOf: Record<string, Role> = {};
-  const laid = variants.map((a) => {
-    const roots = [...a.kept].filter((id) => !a.parent[id]).sort();
-    const { L, canvasW, canvasH } = computeLayout(roots, a.children, a.role);
-    maxW = Math.max(maxW, canvasW);
-    maxH = Math.max(maxH, canvasH);
-    const walk = (id: string): void => {
-      (isBox(id, a.children, a.role) ? boxAny : leafAny).add(id);
-      if (!metaOf[id]) { metaOf[id] = a.meta[id]; roleOf[id] = a.role[id]; }
-      (a.children[id] ?? []).forEach(walk);
-    };
-    roots.forEach(walk);
-    return { a, L, roots };
+  return renderStatesArtifact(variants, expandIndex, ir.nodes, (id) => subtitleFor(id, ir), {
+    theme, title, focus, startState: focus === "network" ? 1 : 0, denseState: 1,
+    hint: "click a box to expand what it collapsed · click a stack box to fold the whole stack",
   });
-  // A node that is ever a box is rendered as a per-state box; the rest are leaf
-  // badges drawn once and moved/faded between states.
-  const badgeIds = [...leafAny].filter((id) => !boxAny.has(id));
-
-  // Pass 2 — per-state box/edge HTML + leaf positions.
-  const states = laid.map(({ a, L, roots }) => {
-    let boxesHtml = "";
-    const walk = (id: string): void => {
-      if (isBox(id, a.children, a.role)) boxesHtml += box(id, L, a.role[id], a.meta[id], theme, subtitleOf(id));
-      (a.children[id] ?? []).forEach(walk);
-    };
-    roots.forEach(walk);
-    const pos: Record<string, { x: number; y: number }> = {};
-    for (const id of badgeIds) if (id in L.X) pos[id] = center(L, id);
-    const obstacleIds = [...a.kept].filter((id) => id in L.X);
-    const route = (from: string, to: string): string => routeEdge(from, to, L, obstaclesFor(from, to, obstacleIds, L, a.parent));
-    let edgesHtml = "";
-    for (const e of a.depEdges) {
-      if (!(e.from in L.X) || !(e.to in L.X)) continue;
-      edgesHtml += depEdgeStr(e.from, e.to, route(e.from, e.to), e.via, e.toAttr, theme);
-    }
-    for (const e of a.implied) {
-      if (!(e.from in L.X) || !(e.to in L.X)) continue;
-      edgesHtml += depEdgeStr(e.from, e.to, route(e.from, e.to), undefined, undefined, theme, true);
-    }
-    return { boxes: boxesHtml, edges: edgesHtml, pos };
-  });
-  // the network view (index 1) is dense → badges go icon-only (label on hover).
-  const stateMeta = states.map((s, i) => ({ ...s, dense: i === 1 }));
-
-  const badges = badgeIds.map((id) => originBadge(id, roleOf[id], metaOf[id], theme, focus)).join("");
-
-  const startState = focus === "network" ? 1 : 0;
-
-  const META: Record<string, { kind: string; lexicon: string; attrs: unknown }> = {};
-  for (const n of ir.nodes) META[n.id] = { kind: n.kind, lexicon: n.lexicon, attrs: n.attrs };
-
-  // Per-box drill-down: what each box collapsed (its hidden plumbing/glue), so a
-  // click can reveal it. Merge the hidden sets across states — a node revealed as
-  // a structured box in the network view is still "collapsed" from the app view,
-  // and the composite boxes' glue (a listener, an SG) is collapsed in every view.
-  const drill: Record<string, Array<{ id: string; kind: string }>> = {};
-  for (const a of variants) {
-    for (const [place, ids] of Object.entries(a.hidden)) {
-      const seen = new Set((drill[place] ??= []).map((d) => d.id));
-      for (const hid of ids) if (!seen.has(hid)) { drill[place].push({ id: hid, kind: META[hid]?.kind ?? "" }); seen.add(hid); }
-    }
-  }
-
-  const themeOptions = Object.keys(THEMES).map((n) => `<option value="${esc(n)}"${n === theme.name ? " selected" : ""}>${esc(n)}</option>`).join("");
-
-  const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${Math.ceil(maxW)} ${Math.ceil(maxH)}" ` +
-    `font-family="'Inter','SF Pro Display',system-ui,-apple-system,'Segoe UI',sans-serif">` +
-    defs(theme) +
-    `<rect width="${Math.ceil(maxW)}" height="${Math.ceil(maxH)}" fill="url(#pin-bg)"/>` +
-    `<rect width="${Math.ceil(maxW)}" height="${Math.ceil(maxH)}" fill="url(#pin-dots)" opacity="0.6"/>` +
-    `<text x="60" y="52" fill="${v(theme, "text")}" font-size="22" font-weight="700">${esc(title)}</text>` +
-    `<g id="pin-boxes"></g><g id="pin-edges"></g>${badges}</svg>`;
-
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(title)} · pinhole containment</title>
-${CONTAIN_CSS}
-</head>
-<body>
-<header class="pin-bar">
-  <h1>${esc(title)}</h1>
-  <span class="pin-hint">click a box to expand what it collapsed · click a stack box to fold the whole stack</span>
-  <label class="pin-theme">theme <select id="pin-theme-select">${themeOptions}</select></label>
-</header>
-<main class="pin-stage" id="pin-stage">${svg}</main>
-<div class="pin-tooltip" id="pin-tooltip" hidden></div>
-<div class="pin-backdrop" id="pin-backdrop" hidden>
-  <aside class="pin-inspector" id="pin-inspector" role="dialog" aria-modal="true">
-    <button class="pin-close" id="pin-close" aria-label="Close inspector">&times;</button>
-    <div id="pin-inspector-body"></div>
-  </aside>
-</div>
-<script>
-const THEMES = ${jsonScriptC(Object.fromEntries(Object.entries(THEMES).map(([k, t]) => [k, t.tokens])))};
-const STATES = ${jsonScriptC(stateMeta)};
-const EXPAND = ${jsonScriptC(expandIndex)};
-const META = ${jsonScriptC(META)};
-const DRILL = ${jsonScriptC(drill)};
-const START = ${startState};
-${CONTAIN_JS}
-</script>
-</body>
-</html>
-`;
 }
 
 const CONTAIN_CSS = `<style>
