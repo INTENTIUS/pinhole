@@ -6,6 +6,7 @@ import { renderHtml } from "./html.ts";
 import { renderMorphHtml, type MorphView } from "./morph.ts";
 import { renderContainment, renderContainmentApp, renderTiersApp, type Focus, type Hints } from "./containment.ts";
 import { diffTiers, unionGraph, deltaSummary } from "./diff.ts";
+import { renderFlow } from "./flow.ts";
 import { composeStacks, shortStackNames } from "./compose.ts";
 import type { GraphIR } from "./ir.ts";
 import { summarizeIr, describeText } from "./inspect.ts";
@@ -160,6 +161,7 @@ async function runRender(args: string[]): Promise<number> {
   let flow = false;
   let json = false;
   let diffDir: string | undefined; // the "before" project to diff the render against
+  let topology = false; // flow/topology lens
   const opts: GraphOptions = {};
 
   for (let i = 0; i < args.length; i++) {
@@ -180,6 +182,7 @@ async function runRender(args: string[]): Promise<number> {
     else if (a === "--json") json = true;
     else if (a === "--detail") opts.detail = Number(args[++i]);
     else if (a === "--diff") diffDir = args[++i];
+    else if (a === "--topology" || a === "--flow-view") topology = true;
     else if (a === "--lens") opts.lens = args[++i];
     else if (a === "--up") opts.up = true;
     else if (a === "--down") opts.down = true;
@@ -241,6 +244,18 @@ async function runRender(args: string[]): Promise<number> {
         note(out);
       }
       if (!out && !html && !json) process.stdout.write(renderContainment(ir, copts));
+      return done();
+    }
+
+    // Flow/topology lens — the architecture-diagram view (internet → ingress →
+    // workload → data, public/private bands). Reads the declarable tier, where the
+    // subnets/routes/ingress live, and does its own band layout.
+    if (topology) {
+      const flowIr = dir ? await graphIr(dir, { ...opts, detail: 2 }) : JSON.parse(await readFile(irFiles[0], "utf8")) as GraphIR;
+      const svg = renderFlow(flowIr, { title, theme });
+      if (html) { await writeFile(html, renderHtml(flowIr, svg, { title, theme })); note(html); }
+      if (out) { await writeFile(out, svg); note(out); }
+      if (!out && !html && !json) process.stdout.write(svg);
       return done();
     }
 
