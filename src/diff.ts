@@ -15,6 +15,19 @@ export interface AttrDelta { key: string; before: unknown; after: unknown }
 export interface GraphDiff {
   status: Record<string, DiffStatus>;
   deltas: Record<string, AttrDelta[]>;
+  /** Edge status keyed by `from>to` — added/removed/same (edges don't "change"). */
+  edges: Record<string, DiffStatus>;
+}
+
+const edgeKey = (e: { from: string; to: string }): string => `${e.from}>${e.to}`;
+
+/** Classify edges by `from>to`: present in both = same, after-only = added,
+ * before-only = removed. */
+export function diffEdges(before: GraphIR["edges"], after: GraphIR["edges"]): Record<string, DiffStatus> {
+  const b = new Set(before.map(edgeKey)), a = new Set(after.map(edgeKey));
+  const out: Record<string, DiffStatus> = {};
+  for (const k of new Set([...b, ...a])) out[k] = b.has(k) && a.has(k) ? "same" : a.has(k) ? "added" : "removed";
+  return out;
 }
 
 function attrDeltas(b: Record<string, unknown> = {}, a: Record<string, unknown> = {}): AttrDelta[] {
@@ -39,7 +52,7 @@ export function diffNodes(before: IRNode[], after: IRNode[]): GraphDiff {
       if (d.length) { status[id] = "changed"; deltas[id] = d; } else status[id] = "same";
     }
   }
-  return { status, deltas };
+  return { status, deltas, edges: {} };
 }
 
 /** Composite-tier diff with member roll-up (see file header). `before`/`after`
@@ -57,7 +70,8 @@ export function diffTiers(before: GraphIR, after: GraphIR, beforeMembers: GraphI
     }
   }
   for (const c of touched) if (comp.status[c] === "same") comp.status[c] = "changed";
-  return { status: { ...mem.status, ...comp.status }, deltas: { ...mem.deltas, ...comp.deltas } };
+  const edges = diffEdges([...before.edges, ...beforeMembers.edges], [...after.edges, ...afterMembers.edges]);
+  return { status: { ...mem.status, ...comp.status }, deltas: { ...mem.deltas, ...comp.deltas }, edges };
 }
 
 /** Merge two IRs for *rendering* a diff: every node/edge from either side, so a

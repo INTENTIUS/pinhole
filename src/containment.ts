@@ -63,6 +63,9 @@ export interface ContainmentOptions {
   /** Per-node change status (added/removed/changed/same) — when set, the tier view
    * paints a diff: added pops green, changed blue, unchanged dims. (See diff.ts.) */
   diff?: Record<string, DiffStatus>;
+  /** Per-edge change status keyed by `from>to` — added edges green, removed
+   * edges red-ghosted. */
+  diffEdges?: Record<string, DiffStatus>;
 }
 
 interface Layout {
@@ -836,20 +839,23 @@ function edgeLabel(label: string, p: { x: number; y: number }, theme: Theme): st
   );
 }
 
-function depEdgeStr(from: string, to: string, d: string, via: string | undefined, toAttr: string | undefined, theme: Theme, implied = false, label?: string, labelPos?: { x: number; y: number }): string {
+function depEdgeStr(from: string, to: string, d: string, via: string | undefined, toAttr: string | undefined, theme: Theme, implied = false, label?: string, labelPos?: { x: number; y: number }, diff?: string): string {
   const attrs =
     ` data-edge-from="${esc(from)}" data-edge-to="${esc(to)}"` +
     (via ? ` data-edge-via="${esc(via)}"` : "") +
     (toAttr ? ` data-edge-to-attr="${esc(toAttr)}"` : "") +
     (label ? ` data-edge-import="${esc(label)}"` : "") +
+    (diff && diff !== "same" ? ` data-edge-diff="${diff}"` : "") +
     (implied ? ` data-edge-implied="1"` : "");
-  // A lifted import reads as the reference it is: accent colour, finer dash.
+  // A lifted import reads as the reference it is: accent colour, finer dash. A
+  // diff overrides the colour: an added edge greens, a removed edge reds + ghosts.
   const isImport = label != null;
-  const stroke = implied ? v(theme, "accentBar") : isImport ? v(theme, "accentStroke") : v(theme, "edge");
-  const dash = implied ? "2 5" : isImport ? "1 4" : "5 5";
-  const op = implied ? ` opacity="0.75"` : "";
+  const diffStroke = diff === "added" ? v(theme, "goodBar") : diff === "removed" ? v(theme, "warnBar") : undefined;
+  const stroke = diffStroke ?? (implied ? v(theme, "accentBar") : isImport ? v(theme, "accentStroke") : v(theme, "edge"));
+  const dash = diff === "removed" ? "3 4" : implied ? "2 5" : isImport ? "1 4" : "5 5";
+  const op = diff === "removed" ? ` opacity="0.55"` : implied ? ` opacity="0.75"` : "";
   return (
-    `<g${attrs}><path class="pin-edge-line" d="${esc(d)}" fill="none" stroke="${stroke}" stroke-width="1.4" stroke-linecap="round" stroke-dasharray="${dash}"${op}/>` +
+    `<g${attrs}><path class="pin-edge-line" d="${esc(d)}" fill="none" stroke="${stroke}" stroke-width="${diff === "added" || diff === "removed" ? "1.8" : "1.4"}" stroke-linecap="round" stroke-dasharray="${dash}"${op}/>` +
     `<path d="${esc(d)}" fill="none" stroke="transparent" stroke-width="14" stroke-linecap="round" pointer-events="stroke"/>` +
     (label && labelPos ? edgeLabel(label, labelPos, theme) : "") +
     `</g>`
@@ -874,9 +880,9 @@ function renderStatesArtifact(
   expandIndex: Record<string, number>,
   metaNodes: Array<{ id: string; kind: string; lexicon: string; attrs?: unknown }>,
   subtitleOf: (id: string) => string | undefined,
-  o: { theme: Theme; title: string; focus: Focus; startState: number; hint: string; denseState: number; diffOf?: (id: string) => string | undefined; labelOf?: (id: string) => string; cardOf?: (id: string) => BoxCard | undefined },
+  o: { theme: Theme; title: string; focus: Focus; startState: number; hint: string; denseState: number; diffOf?: (id: string) => string | undefined; labelOf?: (id: string) => string; cardOf?: (id: string) => BoxCard | undefined; edgeDiffOf?: (from: string, to: string) => string | undefined },
 ): string {
-  const { theme, title, focus, startState, hint, denseState, diffOf, labelOf, cardOf } = o;
+  const { theme, title, focus, startState, hint, denseState, diffOf, labelOf, cardOf, edgeDiffOf } = o;
   const center = (L: Layout, id: string) => ({ x: Math.round(L.X[id] + L.W[id] / 2), y: Math.round(L.Y[id] + L.H[id] / 2) });
 
   // Pass 1 — lay out each variant; collect which ids are boxes vs leaves anywhere.
@@ -919,7 +925,7 @@ function renderStatesArtifact(
     let edgesHtml = "";
     for (const e of a.depEdges) {
       if (!(e.from in L.X) || !(e.to in L.X)) continue;
-      edgesHtml += depEdgeStr(e.from, e.to, route(e.from, e.to), e.via, e.toAttr, theme, false, e.label, edgeLabelPos(e.from, e.to, L));
+      edgesHtml += depEdgeStr(e.from, e.to, route(e.from, e.to), e.via, e.toAttr, theme, false, e.label, edgeLabelPos(e.from, e.to, L), edgeDiffOf?.(e.from, e.to));
     }
     for (const e of a.implied) {
       if (!(e.from in L.X) || !(e.to in L.X)) continue;
@@ -1138,6 +1144,7 @@ export function renderTiersApp(composites: GraphIR, members: GraphIR, opts: Cont
     labelOf: (id) => labelMap[id] ?? id,
     cardOf,
     diffOf: diff ? (id) => diff[id] : undefined,
+    edgeDiffOf: opts.diffEdges ? (from, to) => opts.diffEdges![`${from}>${to}`] : undefined,
     hint: diff
       ? "diff — green added · blue changed · red removed · dim unchanged · click a changed composite to see what changed"
       : "click a composite to drill into the resources it declares · click again to collapse",
