@@ -297,7 +297,14 @@ async function runRender(args: string[]): Promise<number> {
           }
           await writeFile(html, renderTiersApp(uComp, uMem, { title, theme, diff: d.status, diffEdges: d.edges }));
         } else {
-          await writeFile(html, renderTiersApp(ir, members, { title, theme }));
+          // Recursive zoom (#53): fetch the stack tier above the composites so the
+          // view drills stack → composite → declarable. Only at the composite tier.
+          let stack: GraphIR | undefined;
+          if ((opts.detail ?? 1) === 1) {
+            const s = await graphIr(dir, { ...opts, detail: 0 }).catch(() => undefined);
+            if (s?.nodes.length) stack = s;
+          }
+          await writeFile(html, renderTiersApp(ir, members, { title, theme, stack }));
         }
       } else {
         await writeFile(html, renderHtml(ir, svg, { title, theme }));

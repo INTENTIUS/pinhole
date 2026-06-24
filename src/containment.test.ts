@@ -549,4 +549,22 @@ describe("renderTiersApp — composite tier-zoom (render chant's altitude, drill
     expect(d.boxes).toContain('data-node-id="vpc"'); // grouping ref → the VPC is a bounding box
     expect(d.boxes).not.toContain('data-node-id="sub1"'); // one child via SubnetId ≠ a container; sub1 stays a leaf
   });
+
+  it("recursive zoom: a stack tier drills stack → composite → declarable, collapsing one level at a time (#53)", () => {
+    const stack: GraphIR = { nodes: [{ id: "aws", kind: "stack", lexicon: "aws", attrs: {} }], edges: [], groups: {} };
+    const out = renderTiersApp(composites, members, { stack });
+    const sc = out.match(/<script>([\s\S]*?)<\/script>/)![1].replace(/\\u003c/g, "<");
+    const EX = JSON.parse(sc.match(/const EXPAND = (\{[\s\S]*?\});\n/)![1]);
+    const BACK = JSON.parse(sc.match(/const BACK = (\{[\s\S]*?\});\n/)![1]);
+    const ST = JSON.parse(sc.match(/const STATES = (\[[\s\S]*?\]);\n/)![1]);
+
+    expect("aws" in EX).toBe(true); // the stack is a drill target
+    expect("app" in EX).toBe(true); // and so is each composite
+    // collapsing a composite returns to the composites view (the stack's state), not all the way out
+    expect(BACK[EX.app]).toBe(EX.aws);
+    expect(BACK[EX.aws]).toBe(0); // collapsing the stack → its card (state 0)
+    // state 0 is just the stack card — composites/declarables aren't on the canvas yet
+    expect(ST[0].boxes).toContain('data-node-id="aws"');
+    expect(ST[0].pos.appService).toBeUndefined();
+  });
 });

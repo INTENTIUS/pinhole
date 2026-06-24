@@ -66,6 +66,10 @@ export interface ContainmentOptions {
   /** Per-edge change status keyed by `from>to` — added edges green, removed
    * edges red-ghosted. */
   diffEdges?: Record<string, DiffStatus>;
+  /** The tier *above* `composites` (chant `--detail 0`: the stack). When set, the
+   * tier view gains an outer level — the stack drills to its composites, each
+   * composite to its declarables — making the zoom recursive (#53). */
+  stack?: GraphIR;
 }
 
 interface Layout {
@@ -880,9 +884,10 @@ function renderStatesArtifact(
   expandIndex: Record<string, number>,
   metaNodes: Array<{ id: string; kind: string; lexicon: string; attrs?: unknown }>,
   subtitleOf: (id: string) => string | undefined,
-  o: { theme: Theme; title: string; focus: Focus; startState: number; hint: string; denseState: number; diffOf?: (id: string) => string | undefined; labelOf?: (id: string) => string; cardOf?: (id: string) => BoxCard | undefined; edgeDiffOf?: (from: string, to: string) => string | undefined },
+  o: { theme: Theme; title: string; focus: Focus; startState: number; hint: string; denseState: number; diffOf?: (id: string) => string | undefined; labelOf?: (id: string) => string; cardOf?: (id: string) => BoxCard | undefined; edgeDiffOf?: (from: string, to: string) => string | undefined; back?: Record<number, number> },
 ): string {
   const { theme, title, focus, startState, hint, denseState, diffOf, labelOf, cardOf, edgeDiffOf } = o;
+  const back = o.back ?? {};
   const center = (L: Layout, id: string) => ({ x: Math.round(L.X[id] + L.W[id] / 2), y: Math.round(L.Y[id] + L.H[id] / 2) });
 
   // Pass 1 — lay out each variant; collect which ids are boxes vs leaves anywhere.
@@ -987,6 +992,7 @@ const STATES = ${jsonScriptC(stateMeta)};
 const EXPAND = ${jsonScriptC(expandIndex)};
 const META = ${jsonScriptC(META)};
 const DRILL = ${jsonScriptC(drill)};
+const BACK = ${jsonScriptC(back)};
 const START = ${startState};
 ${CONTAIN_JS}
 </script>
@@ -1067,32 +1073,35 @@ export function renderTiersApp(composites: GraphIR, members: GraphIR, opts: Cont
     if (c && c !== n.id) (membersOf[c] ??= []).push(n.id);
   }
   const compIds = composites.nodes.map((n) => n.id);
+  // The optional outer tier (chant --detail 0): a single stack node wrapping the
+  // composites, so the zoom is recursive (stack → composite → declarable, #53).
+  const stackNode = opts.stack?.nodes[0];
+  const stackId = stackNode?.id;
+  if (stackNode) { meta[stackNode.id] = { kind: stackNode.kind, lexicon: stackNode.lexicon }; membersOf[stackNode.id] = [...compIds]; }
 
-  // One state per drill target: state 0 has every composite collapsed (its members
-  // hidden → a card with a count); state k expands one composite's members, nested
-  // by structurally-inferred containment so a VPC boxes its subnets, a route table
-  // its routes — no attr list, no lexicon knowledge (see inferContainmentAttrs).
-  const build = (expanded: string | null): Analysis => {
+  // A state is one focus along the drill path. `focus`: null → the deepest level
+  // collapsed (stack card, or — without a stack — composites collapsed); a stack
+  // id → its composites revealed; a composite id → that composite's declarables
+  // revealed (nested by inferred containment), the rest collapsed.
+  const build = (focus: string | null): Analysis => {
     const role: Record<string, Role> = {};
     const kept = new Set<string>();
     const parent: Record<string, string> = {};
     const children: Record<string, string[]> = {};
     const hidden: Record<string, string[]> = {};
-    for (const c of compIds) { role[c] = "place"; kept.add(c); children[c] = []; }
     const depEdges: Analysis["depEdges"] = composites.edges.map((e) => ({ from: e.from, to: e.to, via: e.viaAttr, toAttr: e.toAttr }));
-    // would nesting `m` under `t` close a cycle? (t already reaches m as a parent)
     const reaches = (from: string, target: string): boolean => {
       let cur: string | undefined = from;
       const seen = new Set<string>();
       while (cur !== undefined && !seen.has(cur)) { if (cur === target) return true; seen.add(cur); cur = parent[cur]; }
       return false;
     };
-    for (const c of compIds) {
+    // Reveal one composite's declarables, nested by structurally-inferred
+    // containment (a VPC boxes its subnets, a route table its routes).
+    const expandComposite = (c: string): void => {
       const mem = membersOf[c] ?? [];
-      if (expanded !== c) { if (mem.length) hidden[c] = [...mem]; continue; }
       const memSet = new Set(mem);
       const nests = inferContainmentAttrs(members.edges, memSet);
-      // first containment ref a member has → the parent it lives in.
       const nestTarget: Record<string, string> = {};
       for (const e of members.edges) {
         if (e.viaAttr && nests.has(e.viaAttr) && memSet.has(e.from) && memSet.has(e.to) && e.from !== e.to && !nestTarget[e.from]) nestTarget[e.from] = e.to;
@@ -1100,27 +1109,54 @@ export function renderTiersApp(composites: GraphIR, members: GraphIR, opts: Cont
       for (const m of mem) {
         kept.add(m);
         const t = nestTarget[m];
-        const home = t && memSet.has(t) && !reaches(t, m) ? t : c; // else hang off the composite box
+        const home = t && memSet.has(t) && !reaches(t, m) ? t : c;
         parent[m] = home;
         (children[home] ??= []).push(m);
       }
-      for (const m of mem) role[m] = children[m]?.length ? "place" : "thing"; // a container reads as a bounding box
-      // Containment refs became nesting; the remaining (dependency) refs draw as lines.
+      for (const m of mem) role[m] = children[m]?.length ? "place" : "thing";
       for (const e of members.edges) {
         if (e.viaAttr && nests.has(e.viaAttr)) continue;
         if (memSet.has(e.from) && memSet.has(e.to) && e.from !== e.to) depEdges.push({ from: e.from, to: e.to, via: e.viaAttr, toAttr: e.toAttr });
       }
+    };
+    const showComposites = (): void => {
+      for (const c of compIds) {
+        role[c] = "place"; kept.add(c);
+        if (stackId) { parent[c] = stackId; children[stackId].push(c); }
+        children[c] = children[c] ?? [];
+        if (focus === c) expandComposite(c);
+        else if (membersOf[c]?.length) hidden[c] = [...membersOf[c]];
+      }
+    };
+    if (stackId) {
+      role[stackId] = "place"; kept.add(stackId); children[stackId] = [];
+      if (focus === null) hidden[stackId] = [...compIds]; // stack collapsed → a card
+      else showComposites(); // stack expanded (focus is the stack or a composite under it)
+    } else {
+      showComposites(); // no stack tier: composites are the roots
     }
     return { role, kept, meta, parent, children, depEdges, implied: [], hidden, ports: new Set(), placeHome: {} };
   };
 
+  // States + the collapse-to-parent map (BACK): drilling goes deeper, collapsing
+  // returns one level up, not all the way out.
   const variants: Analysis[] = [build(null)];
   const expandIndex: Record<string, number> = {};
+  const back: Record<number, number> = {};
+  let composeView = 0; // the state where composites are visible (collapse target for a composite)
+  if (stackId) {
+    expandIndex[stackId] = variants.length;
+    composeView = variants.length;
+    variants.push(build(stackId));
+    back[composeView] = 0; // collapse the stack → its card
+  }
   for (const c of compIds) {
     if (!membersOf[c]?.length) continue;
     expandIndex[c] = variants.length;
+    back[variants.length] = composeView;
     variants.push(build(c));
   }
+  const startState = composeView; // default to composites visible
 
   const subtitleOf = (id: string): string | undefined => {
     const n = membersOf[id]?.length;
@@ -1139,15 +1175,18 @@ export function renderTiersApp(composites: GraphIR, members: GraphIR, opts: Cont
   const diff = opts.diff;
   const cardOf = (id: string): BoxCard | undefined =>
     membersOf[id]?.length ? { kind: meta[id].kind, lexicon: meta[id].lexicon, members: membersOf[id].length } : undefined;
-  return renderStatesArtifact(variants, expandIndex, [...composites.nodes, ...members.nodes], subtitleOf, {
-    theme, title, focus: "app", startState: 0, denseState: -1,
+  const metaNodes = [...(opts.stack?.nodes ?? []), ...composites.nodes, ...members.nodes];
+  return renderStatesArtifact(variants, expandIndex, metaNodes, subtitleOf, {
+    theme, title, focus: "app", startState, denseState: -1, back,
     labelOf: (id) => labelMap[id] ?? id,
     cardOf,
     diffOf: diff ? (id) => diff[id] : undefined,
     edgeDiffOf: opts.diffEdges ? (from, to) => opts.diffEdges![`${from}>${to}`] : undefined,
     hint: diff
       ? "diff — green added · blue changed · red removed · dim unchanged · click a changed composite to see what changed"
-      : "click a composite to drill into the resources it declares · click again to collapse",
+      : stackId
+        ? "click to drill: stack → composites → resources · click an open box to collapse a level"
+        : "click a composite to drill into the resources it declares · click again to collapse",
   });
 }
 
@@ -1291,7 +1330,7 @@ stage.addEventListener("click", (e) => {
   const nd = nodeFrom(e.target);
   if (!nd) return;
   const id = nd.getAttribute("data-node-id");
-  if (id in EXPAND) { applyState(cur === EXPAND[id] ? 0 : EXPAND[id], false); return; }
+  if (id in EXPAND) { applyState(cur === EXPAND[id] ? (BACK[cur] != null ? BACK[cur] : 0) : EXPAND[id], false); return; }
   if (META[id]) openInspector(nodeBody(id, META[id]));
 });
 
