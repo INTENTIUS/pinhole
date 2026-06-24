@@ -280,7 +280,7 @@ async function runRender(args: string[]): Promise<number> {
           for (const node of [...uComp.nodes, ...uMem.nodes]) {
             if (d.deltas[node.id]?.length) (node.attrs as Record<string, unknown>)["Δ changed"] = deltaSummary(d.deltas[node.id]);
           }
-          await writeFile(html, renderTiersApp(uComp, uMem, { title, theme, diff: d.status }));
+          await writeFile(html, renderTiersApp(uComp, uMem, { title, theme, diff: d.status, diffEdges: d.edges }));
         } else {
           await writeFile(html, renderTiersApp(ir, members, { title, theme }));
         }

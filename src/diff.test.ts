@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { diffNodes, diffTiers, deltaSummary, unionGraph } from "./diff.ts";
+import { diffNodes, diffTiers, deltaSummary, unionGraph, diffEdges } from "./diff.ts";
 import type { GraphIR } from "./ir.ts";
 
 const n = (id: string, attrs: Record<string, unknown> = {}, composite?: string) =>
@@ -32,6 +32,24 @@ describe("diffTiers — roll member changes up to the composite", () => {
     expect(d.status.net).toBe("same");
     expect(d.status.db).toBe("added");
     expect(d.status.dbDb).toBe("added");
+  });
+});
+
+describe("diffEdges — classify edges by from>to", () => {
+  it("marks added / removed / same", () => {
+    const before: GraphIR = { nodes: [], edges: [{ from: "app", to: "net", kind: "ref" }, { from: "x", to: "y", kind: "ref" }], groups: {} };
+    const after: GraphIR = { nodes: [], edges: [{ from: "app", to: "net", kind: "ref" }, { from: "db", to: "net", kind: "ref" }], groups: {} };
+    const e = diffEdges(before.edges, after.edges);
+    expect(e["app>net"]).toBe("same");
+    expect(e["db>net"]).toBe("added");
+    expect(e["x>y"]).toBe("removed");
+  });
+
+  it("diffTiers includes edge status across composite + member tiers", () => {
+    const bc: GraphIR = { nodes: [n("app"), n("net")], edges: [{ from: "app", to: "net", kind: "ref" }], groups: {} };
+    const ac: GraphIR = { nodes: [n("app"), n("net"), n("db")], edges: [{ from: "app", to: "net", kind: "ref" }, { from: "db", to: "net", kind: "ref" }], groups: {} };
+    const empty: GraphIR = { nodes: [], edges: [], groups: {} };
+    expect(diffTiers(bc, ac, empty, empty).edges["db>net"]).toBe("added");
   });
 });
 
