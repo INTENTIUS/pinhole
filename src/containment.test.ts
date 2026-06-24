@@ -511,6 +511,11 @@ describe("renderTiersApp — composite tier-zoom (render chant's altitude, drill
     expect(STATES[0].pos.appService).toBeUndefined();
   });
 
+  it("renders a collapsed composite as a card — type + member count", () => {
+    expect(STATES[0].boxes).toContain("FargateAlb"); // the composite's type
+    expect(STATES[0].boxes).toContain("members"); // the drill-in affordance
+  });
+
   it("makes each composite drillable into the resources it declares", () => {
     expect("app" in EXPAND).toBe(true);
     expect("net" in EXPAND).toBe(true);

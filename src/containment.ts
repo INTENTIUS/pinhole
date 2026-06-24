@@ -591,7 +591,11 @@ export function subtitleFor(id: string, ir: GraphIR): string | undefined {
   return parts.length ? parts.join(" · ") : undefined;
 }
 
-function box(id: string, L: Layout, role: Role, m: { kind: string; lexicon: string }, theme: Theme, subtitle?: string, diff?: string, displayLabel = id): string {
+/** A collapsed composite's card detail: its type and how many declarables it
+ * holds — the "there's more inside" affordance, matching the static card view. */
+interface BoxCard { kind: string; lexicon: string; members: number }
+
+function box(id: string, L: Layout, role: Role, m: { kind: string; lexicon: string }, theme: Theme, subtitle?: string, diff?: string, displayLabel = id, card?: BoxCard): string {
   const x = L.X[id];
   const y = L.Y[id];
   const w = L.W[id];
@@ -603,15 +607,27 @@ function box(id: string, L: Layout, role: Role, m: { kind: string; lexicon: stri
   const glyph = resolveGlyph({ lexicon: m.lexicon, kind: m.kind });
   const stroke = isStack ? v(theme, "neutralStroke") : role === "place" ? v(theme, "accentStroke") : v(theme, "neutralStroke");
   const dash = isStack ? ` stroke-dasharray="3 4"` : "";
+  const head =
+    `<g data-node-id="${esc(id)}"${diff ? ` data-diff="${diff}"` : ""}>` +
+    `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="14" fill="${v(theme, "neutralFill")}" fill-opacity="${isStack ? "0.25" : "0.5"}" stroke="${stroke}" stroke-width="1.4"${dash}/>` +
+    (isStack ? "" : glyphAt(glyph.body, x + 14, y + 8, 22, theme));
+  // A collapsed composite renders as a card: title, `type · lexicon`, members count.
+  if (card) {
+    return (
+      head +
+      `<text x="${x + 44}" y="${y + 23}" fill="${v(theme, "text")}" font-size="14" font-weight="700">${esc(clip(label, Math.floor((w - 56) / 8)))}</text>` +
+      `<text x="${x + 44}" y="${y + 40}" fill="${v(theme, "textFaint")}" font-size="11">${esc(clip(card.kind, Math.floor((w - 48) / 6)))}</text>` +
+      `<text x="${x + 16}" y="${y + h - 14}" font-size="11"><tspan fill="${v(theme, "textFaint")}">members </tspan><tspan fill="${v(theme, "textMuted")}">${card.members}</tspan></text>` +
+      `</g>`
+    );
+  }
   // only annotate boxes wide enough to hold it, so a CIDR doesn't run off a subnet
   const room = Math.floor((w - 56) / 8) - label.length - 3;
   const sub = isStack
     ? `<tspan fill="${v(theme, "textFaint")}" font-weight="400"> stack</tspan>`
     : subtitle && w >= 200 && room > 4 ? `<tspan fill="${v(theme, "textFaint")}" font-weight="400"> · ${esc(clip(subtitle, room))}</tspan>` : "";
   return (
-    `<g data-node-id="${esc(id)}"${diff ? ` data-diff="${diff}"` : ""}>` +
-    `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="14" fill="${v(theme, "neutralFill")}" fill-opacity="${isStack ? "0.25" : "0.5"}" stroke="${stroke}" stroke-width="1.4"${dash}/>` +
-    (isStack ? "" : glyphAt(glyph.body, x + 14, y + 8, 22, theme)) +
+    head +
     `<text x="${x + (isStack ? 16 : 44)}" y="${y + 23}" fill="${v(theme, "text")}" font-size="14" font-weight="700">${esc(clip(label, Math.floor((w - 56) / 8)))}${sub}</text>` +
     `</g>`
   );
@@ -858,9 +874,9 @@ function renderStatesArtifact(
   expandIndex: Record<string, number>,
   metaNodes: Array<{ id: string; kind: string; lexicon: string; attrs?: unknown }>,
   subtitleOf: (id: string) => string | undefined,
-  o: { theme: Theme; title: string; focus: Focus; startState: number; hint: string; denseState: number; diffOf?: (id: string) => string | undefined; labelOf?: (id: string) => string },
+  o: { theme: Theme; title: string; focus: Focus; startState: number; hint: string; denseState: number; diffOf?: (id: string) => string | undefined; labelOf?: (id: string) => string; cardOf?: (id: string) => BoxCard | undefined },
 ): string {
-  const { theme, title, focus, startState, hint, denseState, diffOf, labelOf } = o;
+  const { theme, title, focus, startState, hint, denseState, diffOf, labelOf, cardOf } = o;
   const center = (L: Layout, id: string) => ({ x: Math.round(L.X[id] + L.W[id] / 2), y: Math.round(L.Y[id] + L.H[id] / 2) });
 
   // Pass 1 — lay out each variant; collect which ids are boxes vs leaves anywhere.
@@ -889,7 +905,10 @@ function renderStatesArtifact(
   const states = laid.map(({ a, L, roots }) => {
     let boxesHtml = "";
     const walk = (id: string): void => {
-      if (isBox(id, a.children, a.role)) boxesHtml += box(id, L, a.role[id], a.meta[id], theme, subtitleOf(id), diffOf?.(id), labelOf?.(id));
+      if (isBox(id, a.children, a.role)) {
+        const collapsed = (a.children[id]?.length ?? 0) === 0; // a composite with nothing revealed → card
+        boxesHtml += box(id, L, a.role[id], a.meta[id], theme, subtitleOf(id), diffOf?.(id), labelOf?.(id), collapsed ? cardOf?.(id) : undefined);
+      }
       (a.children[id] ?? []).forEach(walk);
     };
     roots.forEach(walk);
@@ -1112,9 +1131,12 @@ export function renderTiersApp(composites: GraphIR, members: GraphIR, opts: Cont
     }
   }
   const diff = opts.diff;
+  const cardOf = (id: string): BoxCard | undefined =>
+    membersOf[id]?.length ? { kind: meta[id].kind, lexicon: meta[id].lexicon, members: membersOf[id].length } : undefined;
   return renderStatesArtifact(variants, expandIndex, [...composites.nodes, ...members.nodes], subtitleOf, {
     theme, title, focus: "app", startState: 0, denseState: -1,
     labelOf: (id) => labelMap[id] ?? id,
+    cardOf,
     diffOf: diff ? (id) => diff[id] : undefined,
     hint: diff
       ? "diff — green added · blue changed · red removed · dim unchanged · click a changed composite to see what changed"
