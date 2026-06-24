@@ -8,6 +8,7 @@ import { renderMorphHtml, type MorphView } from "./morph.ts";
 import { renderContainment, renderContainmentApp, renderTiersApp, type Focus, type Hints } from "./containment.ts";
 import { diffTiers, unionGraph, deltaSummary } from "./diff.ts";
 import { renderFlow } from "./flow.ts";
+import { renderStacked } from "./stacked.ts";
 import { composeStacks, shortStackNames } from "./compose.ts";
 import type { GraphIR } from "./ir.ts";
 import { summarizeIr, describeText } from "./inspect.ts";
@@ -47,7 +48,9 @@ source for it). --diff <dir> paints a change diff against another project (added
 green, changed blue, removed red). --drift <base>:<target> is the env-drift diff:
 the same project at <base> vs <target> — e.g. --drift dev:prod shows what prod adds
 over dev. Both diff modes drill: click a changed composite to see which resources
-changed.
+changed. Add --stacked for the tie-line view: one plane per environment, ties
+connecting the same composite across them (straight = same, accent = changed, no
+tie = drift).
 --focus app|network|security shapes what's salient (default app): network is
 light context, or the structured subject, or security policy is first-class.
 --hints <file.json> (with --containment) overrides salience: { "roles": { id:
@@ -171,6 +174,7 @@ async function runRender(args: string[]): Promise<number> {
   let diffDir: string | undefined; // the "before" project to diff the render against
   let driftBase: string | undefined; // `--drift base:target` — diff one project across two envs
   let topology = false; // flow/topology lens
+  let stacked = false; // stacked tie-line view for a diff/drift
   const opts: GraphOptions = {};
 
   for (let i = 0; i < args.length; i++) {
@@ -194,6 +198,7 @@ async function runRender(args: string[]): Promise<number> {
     else if (a === "--env") opts.env = args[++i];
     else if (a === "--drift") { const [b, t] = (args[++i] ?? "").split(":"); driftBase = b; if (t) opts.env = t; }
     else if (a === "--topology" || a === "--flow-view") topology = true;
+    else if (a === "--stacked") stacked = true;
     else if (a === "--lens") opts.lens = args[++i];
     else if (a === "--up") opts.up = true;
     else if (a === "--down") opts.down = true;
@@ -265,6 +270,27 @@ async function runRender(args: string[]): Promise<number> {
       const flowIr = dir ? await graphIr(dir, { ...opts, detail: 2 }) : JSON.parse(await readFile(irFiles[0], "utf8")) as GraphIR;
       const svg = renderFlow(flowIr, { title, theme });
       if (html) { await writeFile(html, renderHtml(flowIr, svg, { title, theme })); note(html); }
+      if (out) { await writeFile(out, svg); note(out); }
+      if (!out && !html && !json) process.stdout.write(svg);
+      return done();
+    }
+
+    // Stacked tie-line view (#3): one plane per environment, ties connecting the
+    // same composite across them — drift is a missing/accent tie. Needs a diff
+    // source (--drift base:target or --diff <dir>).
+    if (stacked) {
+      if (!dir) return fail(new Error("--stacked needs a project directory"), json);
+      if (!diffDir && !driftBase) return fail(new Error("--stacked needs --drift base:target (or --diff <dir>)"), json);
+      const targetEnv = opts.env ?? basename(resolve(dir));
+      const baseDir = driftBase ? dir : diffDir!;
+      const baseEnv = driftBase ?? basename(resolve(diffDir!));
+      const baseGraphEnv = driftBase ?? opts.env; // base: this dir at base-env, or the other dir at the same env
+      const [tComp, tMem] = await Promise.all([graphIr(dir, { ...opts, detail: 1 }), graphIr(dir, { ...opts, detail: 2 })]);
+      const [bComp, bMem] = await Promise.all([graphIr(baseDir, { ...opts, detail: 1, env: baseGraphEnv }), graphIr(baseDir, { ...opts, detail: 2, env: baseGraphEnv })]);
+      const d = diffTiers(bComp, tComp, bMem, tMem);
+      const stackedTitle = title ?? `${baseEnv} → ${targetEnv}`;
+      const svg = renderStacked({ env: baseEnv, composites: bComp }, { env: targetEnv, composites: tComp }, d.status, { title: stackedTitle, theme });
+      if (html) { await writeFile(html, renderHtml(tComp, svg, { title: stackedTitle, theme })); note(html); }
       if (out) { await writeFile(out, svg); note(out); }
       if (!out && !html && !json) process.stdout.write(svg);
       return done();
