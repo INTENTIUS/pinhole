@@ -21,6 +21,9 @@ export interface GraphOptions {
   up?: boolean;
   /** blast lens: include downstream dependents. */
   down?: boolean;
+  /** Environment (chant `--env <name>`): chant re-evaluates the project for that
+   * environment, so env-aware source yields an environment-specific graph. */
+  env?: string;
 }
 
 /** Build the chant flags for a set of graph options. Pure; exported for testing. */
@@ -30,6 +33,7 @@ export function graphFlags(opts: GraphOptions): string[] {
   if (opts.lens) flags.push("--lens", opts.lens);
   if (opts.up) flags.push("--up");
   if (opts.down) flags.push("--down");
+  if (opts.env) flags.push("--env", opts.env);
   return flags;
 }
 

@@ -1,4 +1,5 @@
 import { writeFile, readFile } from "node:fs/promises";
+import { basename, resolve } from "node:path";
 import { graphIr, graphLayout, lint, type GraphOptions } from "./chant.ts";
 import { getTheme } from "./theme.ts";
 import { renderSvg, cardSizes } from "./paint/render.ts";
@@ -24,6 +25,7 @@ Usage:
   pinhole render <project-dir>... [--ir <ir.json>]... [-o out.svg] [--html out.html]
                                [--title <text>] [--theme <name>] [--rich] [--icon]
                                [--json] [--detail 0..3] [--lens <k>:<t>] [--up] [--down]
+                               [--env <name>] [--diff <dir>] [--drift <base>:<target>]
 
 Themes: dark (default), light, blueprint, aws.
 --rich emits foreignObject HTML labels (browser/inline only); default is portable
@@ -40,6 +42,12 @@ With --containment, pass several project dirs and/or --ir files to render them a
 separate stacks, each in its own boundary box (multi-stack composition). pinhole
 renders the IR, so --ir <file.json> draws a pre-captured graph from any source —
 no chant needed.
+--env <name> renders the project as that environment (chant re-evaluates env-aware
+source for it). --diff <dir> paints a change diff against another project (added
+green, changed blue, removed red). --drift <base>:<target> is the env-drift diff:
+the same project at <base> vs <target> — e.g. --drift dev:prod shows what prod adds
+over dev. Both diff modes drill: click a changed composite to see which resources
+changed.
 --focus app|network|security shapes what's salient (default app): network is
 light context, or the structured subject, or security policy is first-class.
 --hints <file.json> (with --containment) overrides salience: { "roles": { id:
@@ -161,6 +169,7 @@ async function runRender(args: string[]): Promise<number> {
   let flow = false;
   let json = false;
   let diffDir: string | undefined; // the "before" project to diff the render against
+  let driftBase: string | undefined; // `--drift base:target` — diff one project across two envs
   let topology = false; // flow/topology lens
   const opts: GraphOptions = {};
 
@@ -182,6 +191,8 @@ async function runRender(args: string[]): Promise<number> {
     else if (a === "--json") json = true;
     else if (a === "--detail") opts.detail = Number(args[++i]);
     else if (a === "--diff") diffDir = args[++i];
+    else if (a === "--env") opts.env = args[++i];
+    else if (a === "--drift") { const [b, t] = (args[++i] ?? "").split(":"); driftBase = b; if (t) opts.env = t; }
     else if (a === "--topology" || a === "--flow-view") topology = true;
     else if (a === "--lens") opts.lens = args[++i];
     else if (a === "--up") opts.up = true;
@@ -269,6 +280,9 @@ async function runRender(args: string[]): Promise<number> {
     // pinhole renders chant at the altitude it was authored; detail tiers are the
     // zoom. Pass `--detail 2|3` to drill down to declarables/attributes.
     if (opts.detail === undefined) opts.detail = 1;
+    // Env-drift diff: name it "<project> · <base> → <target>" so the header reads
+    // as the drift it shows.
+    if (!title && driftBase) title = `${basename(resolve(dir))} · ${driftBase} → ${opts.env}`;
     const ir = await graphIr(dir, opts);
     // Otherwise measure each node's card, lay out with those sizes, and paint.
     const svg = renderSvg(ir, await graphLayout(dir, opts, cardSizes(ir, { style })), {
@@ -285,11 +299,16 @@ async function runRender(args: string[]): Promise<number> {
       const deepEnough = (opts.detail ?? 1) < 3;
       if (deepEnough) {
         const members = await graphIr(dir, { ...opts, detail: (opts.detail ?? 1) + 1 });
-        if (diffDir) {
-          // --diff: classify this graph against a "before" project and paint the
-          // delta (added/changed/removed/unchanged), member changes rolled up to
-          // their composite. Render the *union* so removed nodes still show.
-          const [bComp, bMem] = await Promise.all([graphIr(diffDir, opts), graphIr(diffDir, { ...opts, detail: (opts.detail ?? 1) + 1 })]);
+        // The "before" side of a diff: another project dir (`--diff <dir>`), or
+        // the *same* project under a different environment (`--drift base:target`
+        // → before = this dir at `base`, after = this dir at `target`).
+        const before = diffDir ? { dir: diffDir, env: opts.env } : driftBase ? { dir: dir!, env: driftBase } : undefined;
+        if (before) {
+          // Classify the after graph against the before graph and paint the delta
+          // (added/changed/removed/unchanged), member changes rolled up to their
+          // composite. Render the *union* so removed nodes still show.
+          const bOpts = { ...opts, env: before.env };
+          const [bComp, bMem] = await Promise.all([graphIr(before.dir, bOpts), graphIr(before.dir, { ...bOpts, detail: (opts.detail ?? 1) + 1 })]);
           const d = diffTiers(bComp, ir, bMem, members);
           const uComp = unionGraph(bComp, ir), uMem = unionGraph(bMem, members);
           for (const node of [...uComp.nodes, ...uMem.nodes]) {

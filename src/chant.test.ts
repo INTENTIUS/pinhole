@@ -46,14 +46,20 @@ describe("graphFlags", () => {
     ]);
   });
 
+  it("passes --env so chant re-evaluates the project for that environment", () => {
+    expect(graphFlags({ env: "prod" })).toEqual(["--env", "prod"]);
+  });
+
   it("combines options in a stable order", () => {
-    expect(graphFlags({ detail: 1, lens: "lexicon:gcp", up: true, down: true })).toEqual([
+    expect(graphFlags({ detail: 1, lens: "lexicon:gcp", up: true, down: true, env: "prod" })).toEqual([
       "--detail",
       "1",
       "--lens",
       "lexicon:gcp",
       "--up",
       "--down",
+      "--env",
+      "prod",
     ]);
   });
 });
