@@ -9,6 +9,7 @@ import { renderContainment, renderContainmentApp, renderTiersApp, type Focus, ty
 import { diffTiers, unionGraph, deltaSummary } from "./diff.ts";
 import { renderFlow } from "./flow.ts";
 import { renderStacked } from "./stacked.ts";
+import { renderSmallMultiples, smallMultiplesSvg } from "./smallmult.ts";
 import { composeStacks, shortStackNames } from "./compose.ts";
 import type { GraphIR } from "./ir.ts";
 import { summarizeIr, describeText } from "./inspect.ts";
@@ -50,7 +51,8 @@ the same project at <base> vs <target> — e.g. --drift dev:prod shows what prod
 over dev. Both diff modes drill: click a changed composite to see which resources
 changed. Add --stacked for the tie-line view: one plane per environment, ties
 connecting the same composite across them (straight = same, accent = changed, no
-tie = drift).
+tie = drift). --envs <a,b,c> renders linked small-multiples: the project at each
+environment side by side, aligned by composite, synced hover, gaps = drift.
 --focus app|network|security shapes what's salient (default app): network is
 light context, or the structured subject, or security policy is first-class.
 --hints <file.json> (with --containment) overrides salience: { "roles": { id:
@@ -175,6 +177,7 @@ async function runRender(args: string[]): Promise<number> {
   let driftBase: string | undefined; // `--drift base:target` — diff one project across two envs
   let topology = false; // flow/topology lens
   let stacked = false; // stacked tie-line view for a diff/drift
+  let envsList: string[] | undefined; // `--envs a,b,c` — linked small-multiples
   const opts: GraphOptions = {};
 
   for (let i = 0; i < args.length; i++) {
@@ -199,6 +202,7 @@ async function runRender(args: string[]): Promise<number> {
     else if (a === "--drift") { const [b, t] = (args[++i] ?? "").split(":"); driftBase = b; if (t) opts.env = t; }
     else if (a === "--topology" || a === "--flow-view") topology = true;
     else if (a === "--stacked") stacked = true;
+    else if (a === "--envs") envsList = (args[++i] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
     else if (a === "--lens") opts.lens = args[++i];
     else if (a === "--up") opts.up = true;
     else if (a === "--down") opts.down = true;
@@ -272,6 +276,19 @@ async function runRender(args: string[]): Promise<number> {
       if (html) { await writeFile(html, renderHtml(flowIr, svg, { title, theme })); note(html); }
       if (out) { await writeFile(out, svg); note(out); }
       if (!out && !html && !json) process.stdout.write(svg);
+      return done();
+    }
+
+    // Linked small-multiples (#3): the same project graphed at each of N
+    // environments, side by side, aligned by composite; synced hover, gaps = drift.
+    if (envsList) {
+      if (!dir) return fail(new Error("--envs needs a project directory"), json);
+      if (envsList.length < 2) return fail(new Error("--envs needs at least two environments, e.g. --envs dev,staging,prod"), json);
+      const panels = await Promise.all(envsList.map(async (e) => ({ env: e, composites: await graphIr(dir, { ...opts, detail: 1, env: e }) })));
+      const smTitle = title ?? `${basename(resolve(dir))} · ${envsList.join(" · ")}`;
+      if (html) { await writeFile(html, renderSmallMultiples(panels, { title: smTitle, theme })); note(html); }
+      if (out) { await writeFile(out, smallMultiplesSvg(panels, theme, smTitle)); note(out); }
+      if (!out && !html && !json) process.stdout.write(smallMultiplesSvg(panels, theme, smTitle));
       return done();
     }
 
