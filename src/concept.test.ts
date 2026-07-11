@@ -51,6 +51,17 @@ describe("concept layout", () => {
     expect(svg).not.toContain("…"); // nothing ellipsized
   });
 
+  it("hideTitle drops the heading and reclaims the band", () => {
+    const layout = layoutIr(ir);
+    const withTitle = renderSvg(ir, layout, { title: "Layers", subtitle: "core → edge" });
+    const noTitle = renderSvg(ir, layout, { hideTitle: true });
+    expect(withTitle).toContain("Layers");
+    expect(noTitle).not.toContain("Layers");
+    // No reserved band → a shorter canvas.
+    const hOf = (svg: string) => Number(/viewBox="0 0 \d+ (\d+)"/.exec(svg)?.[1] ?? /height="(\d+)"/.exec(svg)?.[1]);
+    expect(hOf(noTitle)).toBeLessThan(hOf(withTitle));
+  });
+
   it("respects rankdir (BT flips the vertical order vs TB)", () => {
     const tb = layoutIr(ir, { rankdir: "TB" });
     const bt = layoutIr(ir, { rankdir: "BT" });
