@@ -8,7 +8,7 @@ import { renderMorphHtml, type MorphView } from "./morph.ts";
 import { renderContainment, renderContainmentApp, renderTiersApp, type Focus, type Hints } from "./containment.ts";
 import { diffTiers, unionGraph, deltaSummary } from "./diff.ts";
 import { renderFlow } from "./flow.ts";
-import { layoutIr } from "./concept.ts";
+import { layoutIr, layoutArchitecture } from "./concept.ts";
 import { renderStacked } from "./stacked.ts";
 import { renderSmallMultiples, smallMultiplesSvg } from "./smallmult.ts";
 import { composeStacks, shortStackNames } from "./compose.ts";
@@ -32,11 +32,13 @@ Usage:
                                [--concept --ir <ir.json> [--rankdir TB|BT|LR|RL] [--subtitle <text>]]
 
 Themes: dark (default), light, blueprint, aws.
---concept paints a single hand-authored graph (--ir <file.json>) directly — no
-chant project. pinhole lays it out itself and content-fits each card to its label,
-for conceptual diagrams (layers, pipelines, fan-outs) rather than infra. --rankdir
-sets flow direction (BT = roots at the bottom); --subtitle sets the line under the
-title.
+--concept paints a single graph (--ir <file.json>) directly — no chant project.
+pinhole lays it out itself and content-fits each card to its label, for conceptual
+diagrams (layers, pipelines, fan-outs) or a provisioned infrastructure graph. If
+the IR carries `groups.byContainer` (a live IR from `chant graph --live`), it's
+drawn as an architecture diagram — nested VPC ⊃ subnet ⊃ resource boundary boxes
+with the reconstructed edges between resources. --rankdir sets flow direction
+(BT = roots at the bottom); --subtitle sets the line under the title.
 --rich emits foreignObject HTML labels (browser/inline only); default is portable
 native-SVG text that works as a static image and on GitHub.
 --icon draws each node as a compact glyph + a truncated label (dense graphs);
@@ -350,10 +352,15 @@ async function runRender(args: string[]): Promise<number> {
         ]),
       );
       const hideTitle = noTitle || (!title && !subtitle);
-      // Titled groups come from `groups.byStack` (name → node ids) — a boundary
-      // box per group, members kept together.
-      const groups = ir.groups?.byStack;
-      const layout = layoutIr(ir, { style, rankdir, overrides, fit: true, groups });
+      // A provisioned IR (chant#779) nests resources under containers via
+      // `groups.byContainer` → an architecture diagram (VPC ⊃ subnet ⊃ resource
+      // boxes). Otherwise flat titled groups from `groups.byStack`. (byContainer
+      // is read defensively — the installed chant types may lag the field.)
+      const byContainer = (ir.groups as { byContainer?: Record<string, string[]> } | undefined)?.byContainer;
+      const layout =
+        byContainer && Object.keys(byContainer).length > 0
+          ? layoutArchitecture(ir, byContainer, { style, rankdir, overrides, fit: true })
+          : layoutIr(ir, { style, rankdir, overrides, fit: true, groups: ir.groups?.byStack });
       const svg = renderSvg(ir, layout, { title, subtitle, theme, tier, style, fit: true, hideTitle, overrides, groups: layout.groups, animate: { pulse, flow } });
       if (html) { await writeFile(html, renderHtml(ir, svg, { title, theme })); note(html); }
       if (out) { await writeFile(out, svg); note(out); }

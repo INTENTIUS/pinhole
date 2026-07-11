@@ -92,3 +92,87 @@ export function layoutIr(ir: GraphIR, opts: ConceptLayoutOptions = {}): ConceptL
 
   return { nodes, width: gg.width ?? 0, height, groups };
 }
+
+const shortKind = (kind: string): string => kind.split("::").pop() ?? kind;
+
+/**
+ * Architecture layout (chant#74): a *provisioned* IR whose `groups.byContainer`
+ * (chant#779) nests resources inside their containers — VPC ⊃ subnet ⊃ resource.
+ * Container nodes become **titled boundary boxes** (not cards); everything else
+ * is a card inside them, wired by the reconstructed edges (chant#778). Uses
+ * dagre's *nested* compound layout so a subnet box sits inside its VPC box.
+ *
+ * `byContainer` is `containerNodeId → [memberIds]`; a member may itself be a
+ * container (the nesting). Cards are the non-container nodes.
+ */
+export function layoutArchitecture(
+  ir: GraphIR,
+  byContainer: Record<string, string[]>,
+  opts: ConceptLayoutOptions = {},
+): ConceptLayout {
+  const containerIds = new Set(Object.keys(byContainer));
+  const nodeById = new Map(ir.nodes.map((n) => [n.id, n]));
+  // parent-of: member → its container. Depth = chain length to a root container.
+  const parentOf = new Map<string, string>();
+  for (const [c, members] of Object.entries(byContainer)) for (const m of members) parentOf.set(m, c);
+  const depthOf = (id: string): number => {
+    let d = 0;
+    let cur = id;
+    const seen = new Set<string>();
+    while (parentOf.has(cur) && !seen.has(cur)) {
+      seen.add(cur);
+      cur = parentOf.get(cur)!;
+      d++;
+    }
+    return d;
+  };
+
+  const leaves = ir.nodes.filter((n) => !containerIds.has(n.id));
+  const sizes = cardSizes({ nodes: leaves, edges: [], groups: {} }, { style: opts.style, overrides: opts.overrides, fit: opts.fit ?? true });
+
+  const g = new dagre.graphlib.Graph({ multigraph: true, compound: true });
+  g.setGraph({ rankdir: opts.rankdir ?? "TB", ranksep: opts.ranksep ?? 60, nodesep: opts.nodesep ?? 48, marginx: 0, marginy: 0 });
+  g.setDefaultEdgeLabel(() => ({}));
+
+  const cId = (id: string) => `__box__:${id}`;
+  for (const n of leaves) {
+    const s = sizes[n.id] ?? { w: 180, h: 60 };
+    g.setNode(n.id, { width: s.w, height: s.h });
+  }
+  for (const c of containerIds) g.setNode(cId(c), {});
+  // Nest: each member sits in its container's box (a member that's itself a
+  // container nests as a sub-box).
+  for (const [m, c] of parentOf) {
+    const child = containerIds.has(m) ? cId(m) : m;
+    if (g.hasNode(child) && g.hasNode(cId(c))) g.setParent(child, cId(c));
+  }
+  // Edges connect cards (leaves); references to a container box are skipped.
+  for (const e of ir.edges) {
+    if (leaves.some((n) => n.id === e.from) && leaves.some((n) => n.id === e.to)) {
+      g.setEdge(e.from, e.to, {}, `${e.from}->${e.to}`);
+    }
+  }
+
+  dagre.layout(g);
+  const gg = g.graph();
+  const height = gg.height ?? 0;
+
+  const nodes = leaves
+    .filter((n) => g.hasNode(n.id))
+    .map((n) => {
+      const p = g.node(n.id);
+      return { id: n.id, x: p.x, y: height - p.y };
+    });
+
+  const groups: GroupBox[] = [...containerIds]
+    .map((id): GroupBox | undefined => {
+      const b = g.node(cId(id)) as { x: number; y: number; width: number; height: number } | undefined;
+      if (!b) return undefined;
+      const node = nodeById.get(id);
+      const title = node?.kind ? `${id}  ·  ${shortKind(node.kind)}` : id;
+      return { title, x: b.x, y: height - b.y, w: b.width, h: b.height, depth: depthOf(id) };
+    })
+    .filter((b): b is GroupBox => b !== undefined);
+
+  return { nodes, width: gg.width ?? 0, height, groups };
+}

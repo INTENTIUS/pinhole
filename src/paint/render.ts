@@ -30,6 +30,9 @@ export interface GroupBox {
   y: number;
   w: number;
   h: number;
+  /** Nesting depth (0 = outermost). Boxes draw outer-first so inner boxes and
+   * cards sit on top. Absent = flat (depth 0). */
+  depth?: number;
 }
 
 interface FootprintOptions {
@@ -141,8 +144,10 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
     c.title(MARGIN, 56, opts.title ?? "Infrastructure", subtitle);
   }
 
-  // Group boundary boxes first, so edges and cards sit on top of them.
-  for (const grp of opts.groups ?? []) {
+  // Group boundary boxes first, so edges and cards sit on top. Outer-first
+  // (by depth) so nested boxes (VPC ⊃ subnet) layer correctly.
+  const orderedGroups = [...(opts.groups ?? [])].sort((a, b) => (a.depth ?? 0) - (b.depth ?? 0));
+  for (const grp of orderedGroups) {
     const cx = MARGIN + grp.x;
     const cy = MARGIN + band + (layout.height - grp.y);
     c.groupBox(Math.round(cx - grp.w / 2), Math.round(cy - grp.h / 2), Math.round(grp.w), Math.round(grp.h), grp.title);

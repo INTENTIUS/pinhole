@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { layoutIr } from "./concept.ts";
+import { layoutIr, layoutArchitecture } from "./concept.ts";
 import { renderSvg } from "./paint/render.ts";
 import type { GraphIR } from "./ir.ts";
 
@@ -116,6 +116,37 @@ describe("concept layout", () => {
     const svg = renderSvg(decision, layoutIr(decision), { hideTitle: true });
     // The accent card uses the accentStroke token; a neutral one would not.
     expect(svg).toContain("--pin-accentStroke");
+  });
+
+  it("architecture layout: containers become nested titled boxes, leaves become cards", () => {
+    const arch: GraphIR = {
+      nodes: [
+        { id: "vpc", kind: "AWS::EC2::VPC", lexicon: "aws", attrs: {} },
+        { id: "subnet", kind: "AWS::EC2::Subnet", lexicon: "aws", attrs: {} },
+        { id: "sg", kind: "AWS::EC2::SecurityGroup", lexicon: "aws", attrs: {} },
+        { id: "instance", kind: "AWS::EC2::Instance", lexicon: "aws", attrs: {} },
+      ],
+      edges: [{ from: "instance", to: "sg", kind: "ref", viaAttr: "sg" }],
+      groups: {},
+    };
+    const byContainer = { vpc: ["subnet", "sg"], subnet: ["instance"] };
+    const layout = layoutArchitecture(arch, byContainer);
+
+    // Containers are boxes, not cards; leaves are cards.
+    const cardIds = layout.nodes.map((n) => n.id).sort();
+    expect(cardIds).toEqual(["instance", "sg"]);
+    const boxTitles = layout.groups.map((g) => g.title.split("  ·  ")[0]).sort();
+    expect(boxTitles).toEqual(["subnet", "vpc"]);
+
+    // Nesting depth: vpc outer (0), subnet inner (1).
+    const depthOf = (id: string) => layout.groups.find((g) => g.title.startsWith(id))!.depth;
+    expect(depthOf("vpc")).toBe(0);
+    expect(depthOf("subnet")).toBe(1);
+
+    // The subnet box sits inside the vpc box.
+    const vpc = layout.groups.find((g) => g.title.startsWith("vpc"))!;
+    const subnet = layout.groups.find((g) => g.title.startsWith("subnet"))!;
+    expect(subnet.w).toBeLessThan(vpc.w);
   });
 
   it("respects rankdir (BT flips the vertical order vs TB)", () => {
