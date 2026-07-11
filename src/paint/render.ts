@@ -159,6 +159,9 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
       via: e.viaAttr,
       toAttr: e.toAttr,
     });
+    // Draw the relation/branch label on the edge (concept diagrams). Placed at the
+    // path midpoint as a chip that cuts across the line.
+    if (e.viaAttr) c.edgeLabel((a.cx + b.cx) / 2, (a.cy + b.cy) / 2, e.viaAttr);
   }
 
   for (const node of ir.nodes) {
@@ -193,7 +196,12 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
   return c.toString();
 }
 
-/** Placeholder status mapping. A real design system will key off kind/lexicon. */
-function statusFor(_node: IRNode): Status {
-  return "neutral";
+const STATUS_VALUES = new Set<Status>(["neutral", "accent", "good", "warn", "selected"]);
+
+/** A node's status colour. Concept diagrams set it with a reserved `_status`
+ * attr (accent / good / warn / selected) — e.g. a decision node (accent) or an
+ * affected file (warn). The attr is filtered out of the visible fields upstream. */
+function statusFor(node: IRNode): Status {
+  const s = (node.attrs as Record<string, unknown>)?._status;
+  return typeof s === "string" && STATUS_VALUES.has(s as Status) ? (s as Status) : "neutral";
 }

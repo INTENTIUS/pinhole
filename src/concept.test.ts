@@ -81,6 +81,30 @@ describe("concept layout", () => {
     expect(layoutIr(ir).groups).toHaveLength(0);
   });
 
+  it("draws visible edge labels from viaAttr", () => {
+    const labelled: GraphIR = {
+      nodes: [
+        { id: "Q", kind: "", lexicon: "", attrs: {} },
+        { id: "A", kind: "", lexicon: "", attrs: {} },
+      ],
+      edges: [{ from: "Q", to: "A", kind: "ref", viaAttr: "yes — keep it" }],
+      groups: {},
+    };
+    const svg = renderSvg(labelled, layoutIr(labelled), { hideTitle: true });
+    expect(svg).toContain("yes — keep it");
+  });
+
+  it("maps a reserved _status attr to the card status token", () => {
+    const decision: GraphIR = {
+      nodes: [{ id: "Existing pipeline?", kind: "", lexicon: "", attrs: { _status: "accent" } }],
+      edges: [],
+      groups: {},
+    };
+    const svg = renderSvg(decision, layoutIr(decision), { hideTitle: true });
+    // The accent card uses the accentStroke token; a neutral one would not.
+    expect(svg).toContain("--pin-accentStroke");
+  });
+
   it("respects rankdir (BT flips the vertical order vs TB)", () => {
     const tb = layoutIr(ir, { rankdir: "TB" });
     const bt = layoutIr(ir, { rankdir: "BT" });
