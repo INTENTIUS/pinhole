@@ -25,38 +25,62 @@ export interface NodeOverride {
 interface FootprintOptions {
   style?: NodeStyle;
   override?: NodeOverride;
+  /** Content-fit width: size each card to its longest line (title / sub / field)
+   * instead of the fixed grid width. For concept diagrams, whose labels are
+   * descriptive phrases, not short infra names. Off by default — infra cards stay
+   * a uniform grid. */
+  fit?: boolean;
 }
 
+// Approx glyph advances for the fixed faces, used only to size content-fit cards.
+const CH_TITLE = 8.4; // 15px/700
+const CH_SUB = 5.9; //   11px
+const FIT_MIN = 170;
+const FIT_MAX = 420;
+
 /** A node's painted footprint, in px. The single source of truth for both the
- * layout sizes pinhole feeds chant (`--node-sizes`) and what it paints, so
- * spacing and drawing agree. Icon nodes are a fixed compact badge; card width is
- * fixed and height grows with the field rows shown. */
+ * layout sizes pinhole feeds the layout engine and what it paints, so spacing and
+ * drawing agree. Icon nodes are a fixed compact badge; a card's height grows with
+ * its field rows, and its width is the fixed grid width unless `fit` is set, in
+ * which case it grows to hold its longest line. */
 export function cardFootprint(node: IRNode, opts: FootprintOptions = {}): { w: number; h: number } {
   if (opts.style === "icon") return { w: ICON_W, h: ICON_H };
   const fields = resolveFields(node, { override: opts.override?.fields });
-  return { w: CARD_W, h: CARD_BASE + fields.length * ROW_H };
+  const h = CARD_BASE + fields.length * ROW_H;
+  if (!opts.fit) return { w: CARD_W, h };
+  const titleW = 46 + node.id.length * CH_TITLE + 14;
+  const subW = 16 + `${node.kind} · ${node.lexicon}`.length * CH_SUB + 14;
+  const fieldW = fields.reduce((m, f) => Math.max(m, 16 + `${f.label}: ${f.value}`.length * CH_SUB + 14), 0);
+  const w = Math.min(FIT_MAX, Math.max(FIT_MIN, Math.ceil(Math.max(titleW, subW, fieldW))));
+  return { w, h };
 }
 
 /** Footprints for every node, keyed by id — the `--node-sizes` map for chant's
  * size-aware layout (#509). */
 export function cardSizes(
   ir: GraphIR,
-  opts: { style?: NodeStyle; overrides?: Record<string, NodeOverride> } = {},
+  opts: { style?: NodeStyle; overrides?: Record<string, NodeOverride>; fit?: boolean } = {},
 ): Record<string, { w: number; h: number }> {
   const out: Record<string, { w: number; h: number }> = {};
   for (const node of ir.nodes) {
-    out[node.id] = cardFootprint(node, { style: opts.style, override: opts.overrides?.[node.id] });
+    out[node.id] = cardFootprint(node, { style: opts.style, override: opts.overrides?.[node.id], fit: opts.fit });
   }
   return out;
 }
 
 export interface RenderOptions {
   title?: string;
+  /** Line under the title. Defaults to the infra count ("N resources · N
+   * references"); concept diagrams pass their own (or "" to omit). */
+  subtitle?: string;
   theme?: Theme;
   /** "portable" = native SVG text (default); "rich" = foreignObject HTML labels. */
   tier?: "portable" | "rich";
   /** "card" (default) or "icon" — a compact glyph + truncated label. */
   style?: NodeStyle;
+  /** Content-fit cards (see cardFootprint). Must match the value passed to
+   * cardSizes for the layout, so spacing and drawing agree. */
+  fit?: boolean;
   /** Per-node presentation overrides, keyed by node id. */
   overrides?: Record<string, NodeOverride>;
   /** Ambient animation (semantic motion; reduced-motion guarded in CSS). */
@@ -81,7 +105,10 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
   // nothing to post-scale (#509). Map into a px canvas with a title band on top,
   // flipping y so the graph reads top-to-bottom.
   const pos = new Map(layout.nodes.map((n) => [n.id, n]));
-  const W = Math.ceil(layout.width + MARGIN * 2);
+  // Canvas must also hold the title band text, which can be wider than a narrow
+  // graph (e.g. a 3-node stack under a long heading) — size to whichever is wider.
+  const titlePx = MARGIN + Math.max((opts.title ?? "").length * 15.6, (opts.subtitle ?? "").length * 7.5) + MARGIN;
+  const W = Math.ceil(Math.max(layout.width + MARGIN * 2, titlePx));
   const H = Math.ceil(layout.height + MARGIN * 2 + TITLE_BAND);
 
   const place = (id: string): { cx: number; cy: number } | undefined => {
@@ -91,7 +118,8 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
   };
 
   const c = new Canvas(W, H, theme);
-  c.title(MARGIN, 56, opts.title ?? "Infrastructure", `${ir.nodes.length} resources · ${ir.edges.length} references`);
+  const subtitle = opts.subtitle ?? `${ir.nodes.length} resources · ${ir.edges.length} references`;
+  c.title(MARGIN, 56, opts.title ?? "Infrastructure", subtitle);
 
   // Edges first (connect at layout-point centers) so cards sit on top.
   for (const e of ir.edges) {
@@ -121,14 +149,17 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
     }
 
     const fields = resolveFields(node, { override: opts.overrides?.[node.id]?.fields });
+    const cardW = opts.fit
+      ? cardFootprint(node, { style: "card", override: opts.overrides?.[node.id], fit: true }).w
+      : CARD_W;
     const h = CARD_BASE + fields.length * ROW_H;
-    const x = Math.round(p.cx - CARD_W / 2);
+    const x = Math.round(p.cx - cardW / 2);
     const y = Math.round(p.cy - h / 2);
-    const sub = `${node.kind} · ${node.lexicon}`;
+    const sub = [node.kind, node.lexicon].filter(Boolean).join(" · ");
     if (tier === "rich") {
-      c.nodeCardRich(x, y, CARD_W, h, status, node.id, sub, fields, emphasize, node.id);
+      c.nodeCardRich(x, y, cardW, h, status, node.id, sub, fields, emphasize, node.id);
     } else {
-      c.nodeCard(x, y, CARD_W, h, status, node.id, sub, glyph.body, fields, emphasize, node.id);
+      c.nodeCard(x, y, cardW, h, status, node.id, sub, glyph.body, fields, emphasize, node.id);
     }
   }
 

@@ -8,6 +8,7 @@ import { renderMorphHtml, type MorphView } from "./morph.ts";
 import { renderContainment, renderContainmentApp, renderTiersApp, type Focus, type Hints } from "./containment.ts";
 import { diffTiers, unionGraph, deltaSummary } from "./diff.ts";
 import { renderFlow } from "./flow.ts";
+import { layoutIr } from "./concept.ts";
 import { renderStacked } from "./stacked.ts";
 import { renderSmallMultiples, smallMultiplesSvg } from "./smallmult.ts";
 import { composeStacks, shortStackNames } from "./compose.ts";
@@ -28,8 +29,14 @@ Usage:
                                [--title <text>] [--theme <name>] [--rich] [--icon]
                                [--json] [--detail 0..3] [--lens <k>:<t>] [--up] [--down]
                                [--env <name>] [--diff <dir>] [--drift <base>:<target>]
+                               [--concept --ir <ir.json> [--rankdir TB|BT|LR|RL] [--subtitle <text>]]
 
 Themes: dark (default), light, blueprint, aws.
+--concept paints a single hand-authored graph (--ir <file.json>) directly — no
+chant project. pinhole lays it out itself and content-fits each card to its label,
+for conceptual diagrams (layers, pipelines, fan-outs) rather than infra. --rankdir
+sets flow direction (BT = roots at the bottom); --subtitle sets the line under the
+title.
 --rich emits foreignObject HTML labels (browser/inline only); default is portable
 native-SVG text that works as a static image and on GitHub.
 --icon draws each node as a compact glyph + a truncated label (dense graphs);
@@ -163,6 +170,9 @@ async function runRender(args: string[]): Promise<number> {
   let out: string | undefined;
   let html: string | undefined;
   let title: string | undefined;
+  let subtitle: string | undefined;
+  let concept = false; // paint a hand-authored --ir graph directly (no chant)
+  let rankdir: "TB" | "BT" | "LR" | "RL" = "TB";
   let themeName: string | undefined;
   let tier: "portable" | "rich" = "portable";
   let style: "card" | "icon" = "card";
@@ -185,6 +195,9 @@ async function runRender(args: string[]): Promise<number> {
     if (a === "-o" || a === "--out") out = args[++i];
     else if (a === "--html") html = args[++i];
     else if (a === "--title") title = args[++i];
+    else if (a === "--subtitle") subtitle = args[++i];
+    else if (a === "--concept") concept = true;
+    else if (a === "--rankdir") rankdir = (args[++i] as typeof rankdir) ?? "TB";
     else if (a === "--theme") themeName = args[++i];
     else if (a === "--rich") tier = "rich";
     else if (a === "--icon" || a === "--icons") style = "icon";
@@ -308,6 +321,30 @@ async function runRender(args: string[]): Promise<number> {
       const stackedTitle = title ?? `${baseEnv} → ${targetEnv}`;
       const svg = renderStacked({ env: baseEnv, composites: bComp }, { env: targetEnv, composites: tComp }, d.status, { title: stackedTitle, theme });
       if (html) { await writeFile(html, renderHtml(tComp, svg, { title: stackedTitle, theme })); note(html); }
+      if (out) { await writeFile(out, svg); note(out); }
+      if (!out && !html && !json) process.stdout.write(svg);
+      return done();
+    }
+
+    // Concept view — paint a hand-authored graph (`--ir <file>`) directly. No
+    // chant project behind it: pinhole runs the layout itself (dagre) and reuses
+    // the card painter. For docs diagrams (layers, pipelines, fan-outs) authored
+    // as `<name>.ir.json`, not infrastructure.
+    if (concept) {
+      if (irFiles.length !== 1) return fail(new Error("--concept paints one hand-authored graph; pass exactly one --ir <file>"), json);
+      const ir = JSON.parse(await readFile(irFiles[0], "utf8")) as GraphIR;
+      // A concept node's body is its attrs, shown in author order — the infra
+      // field template (short scalars only) drops the descriptive phrases these
+      // diagrams carry, so pass them through as explicit field overrides.
+      const overrides = Object.fromEntries(
+        ir.nodes.map((n) => [
+          n.id,
+          { fields: Object.entries(n.attrs).map(([label, value]) => ({ label, value: String(value) })).slice(0, 4) },
+        ]),
+      );
+      const layout = layoutIr(ir, { style, rankdir, overrides, fit: true });
+      const svg = renderSvg(ir, layout, { title, subtitle, theme, tier, style, fit: true, overrides, animate: { pulse, flow } });
+      if (html) { await writeFile(html, renderHtml(ir, svg, { title, theme })); note(html); }
       if (out) { await writeFile(out, svg); note(out); }
       if (!out && !html && !json) process.stdout.write(svg);
       return done();
