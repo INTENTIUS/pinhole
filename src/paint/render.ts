@@ -153,12 +153,16 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
     const a = place(e.from);
     const b = place(e.to);
     if (!a || !b) continue;
-    c.edge(`M ${a.cx} ${a.cy} C ${a.cx} ${(a.cy + b.cy) / 2}, ${b.cx} ${(a.cy + b.cy) / 2}, ${b.cx} ${b.cy}`, 1.4, flow, {
-      from: e.from,
-      to: e.to,
-      via: e.viaAttr,
-      toAttr: e.toAttr,
-    });
+    // Concept edges may carry an optional `style: "dashed"` in the IR JSON
+    // (untyped in GraphIR) for optional / secondary relations.
+    const dashed = (e as { style?: string }).style === "dashed";
+    c.edge(
+      `M ${a.cx} ${a.cy} C ${a.cx} ${(a.cy + b.cy) / 2}, ${b.cx} ${(a.cy + b.cy) / 2}, ${b.cx} ${b.cy}`,
+      1.4,
+      flow,
+      { from: e.from, to: e.to, via: e.viaAttr, toAttr: e.toAttr },
+      dashed,
+    );
     // Draw the relation/branch label on the edge (concept diagrams). Placed at the
     // path midpoint as a chip that cuts across the line.
     if (e.viaAttr) c.edgeLabel((a.cx + b.cx) / 2, (a.cy + b.cy) / 2, e.viaAttr);
