@@ -35,8 +35,8 @@ Themes: dark (default), light, blueprint, aws.
 --concept paints a single graph (--ir <file.json>) directly — no chant project.
 pinhole lays it out itself and content-fits each card to its label, for conceptual
 diagrams (layers, pipelines, fan-outs) or a provisioned infrastructure graph. If
-the IR carries `groups.byContainer` (a live IR from `chant graph --live`), it's
-drawn as an architecture diagram — nested VPC ⊃ subnet ⊃ resource boundary boxes
+the IR carries groups.byContainer (a live IR from 'chant graph --live'), it's
+drawn as an architecture diagram — nested VPC contains subnet contains resource boxes
 with the reconstructed edges between resources. --rankdir sets flow direction
 (BT = roots at the bottom); --subtitle sets the line under the title.
 --rich emits foreignObject HTML labels (browser/inline only); default is portable
