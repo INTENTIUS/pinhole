@@ -94,6 +94,19 @@ describe("concept layout", () => {
     expect(svg).toContain("yes — keep it");
   });
 
+  it("renders a dashed edge when the edge carries style: dashed", () => {
+    const g: GraphIR = {
+      nodes: [
+        { id: "A", kind: "", lexicon: "", attrs: {} },
+        { id: "B", kind: "", lexicon: "", attrs: {} },
+      ],
+      edges: [{ from: "A", to: "B", kind: "ref", style: "dashed" } as GraphIR["edges"][number]],
+      groups: {},
+    };
+    const svg = renderSvg(g, layoutIr(g), { hideTitle: true });
+    expect(svg).toContain("stroke-dasharray");
+  });
+
   it("maps a reserved _status attr to the card status token", () => {
     const decision: GraphIR = {
       nodes: [{ id: "Existing pipeline?", kind: "", lexicon: "", attrs: { _status: "accent" } }],

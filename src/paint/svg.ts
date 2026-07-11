@@ -217,9 +217,10 @@ export class Canvas {
    * encodes), the path is wrapped in a group carrying `data-edge-*` hooks and an
    * invisible wide hit-path, so the interactive artifact can roll over a thin
    * edge to show the relationship + ref value. */
-  edge(d: string, width: number, flow = false, rel?: EdgeRel): void {
+  edge(d: string, width: number, flow = false, rel?: EdgeRel, dashed = false): void {
     const lineCls = flow ? ` class="pin-edge-line pin-flow"` : ` class="pin-edge-line"`;
-    const line = `<path${lineCls} d="${esc(d)}" fill="none" stroke="${this.c("edge")}" stroke-width="${width}" stroke-linecap="round"/>`;
+    const dash = dashed ? ` stroke-dasharray="5 4"` : "";
+    const line = `<path${lineCls} d="${esc(d)}" fill="none" stroke="${this.c("edge")}" stroke-width="${width}"${dash} stroke-linecap="round"/>`;
     if (!rel) {
       this.body += line;
       return;
