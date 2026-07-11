@@ -235,6 +235,16 @@ export class Canvas {
       `<path d="${esc(d)}" fill="none" stroke="transparent" stroke-width="14" stroke-linecap="round" pointer-events="stroke"/></g>`;
   }
 
+  /** A visible label on an edge (concept diagrams — branch conditions, relations).
+   * A small chip in the page-background color so it cuts cleanly across the line. */
+  edgeLabel(x: number, y: number, text: string): void {
+    const w = text.length * 5.7 + 14;
+    this.body +=
+      `<g><rect x="${(x - w / 2).toFixed(1)}" y="${y - 9}" width="${w.toFixed(1)}" height="18" rx="9" ` +
+      `fill="${this.c("bg0")}" stroke="${this.c("neutralStroke")}" stroke-width="1"/>` +
+      `<text x="${x.toFixed(1)}" y="${y + 3.5}" text-anchor="middle" fill="${this.c("textMuted")}" font-size="10.5">${esc(text)}</text></g>`;
+  }
+
   toString(): string {
     return this.body + `</svg>`;
   }

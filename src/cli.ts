@@ -341,7 +341,12 @@ async function runRender(args: string[]): Promise<number> {
       const overrides = Object.fromEntries(
         ir.nodes.map((n) => [
           n.id,
-          { fields: Object.entries(n.attrs).map(([label, value]) => ({ label, value: String(value) })).slice(0, 4) },
+          {
+            fields: Object.entries(n.attrs)
+              .filter(([label]) => !label.startsWith("_")) // reserved (e.g. _status) — not a visible field
+              .map(([label, value]) => ({ label, value: String(value) }))
+              .slice(0, 4),
+          },
         ]),
       );
       const hideTitle = noTitle || (!title && !subtitle);
