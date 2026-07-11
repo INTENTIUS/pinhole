@@ -22,6 +22,16 @@ export interface NodeOverride {
   fields?: Field[];
 }
 
+/** A titled boundary region behind a group of cards (concept diagrams). Position
+ * is a card *center* in the same y-up plane as the layout nodes. */
+export interface GroupBox {
+  title: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 interface FootprintOptions {
   style?: NodeStyle;
   override?: NodeOverride;
@@ -86,6 +96,8 @@ export interface RenderOptions {
   /** Drop the title band entirely — no heading, no reserved space. For embedding
    * where the surrounding context (a docs figure caption) supplies the heading. */
   hideTitle?: boolean;
+  /** Titled boundary regions drawn behind the cards (concept diagrams). */
+  groups?: GroupBox[];
   /** Ambient animation (semantic motion; reduced-motion guarded in CSS). */
   animate?: {
     /** Node ids to emphasize (pulse). */
@@ -129,7 +141,14 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
     c.title(MARGIN, 56, opts.title ?? "Infrastructure", subtitle);
   }
 
-  // Edges first (connect at layout-point centers) so cards sit on top.
+  // Group boundary boxes first, so edges and cards sit on top of them.
+  for (const grp of opts.groups ?? []) {
+    const cx = MARGIN + grp.x;
+    const cy = MARGIN + band + (layout.height - grp.y);
+    c.groupBox(Math.round(cx - grp.w / 2), Math.round(cy - grp.h / 2), Math.round(grp.w), Math.round(grp.h), grp.title);
+  }
+
+  // Edges (connect at layout-point centers) so cards sit on top.
   for (const e of ir.edges) {
     const a = place(e.from);
     const b = place(e.to);

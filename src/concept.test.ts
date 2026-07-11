@@ -62,6 +62,25 @@ describe("concept layout", () => {
     expect(hOf(noTitle)).toBeLessThan(hOf(withTitle));
   });
 
+  it("frames a declared group in a boundary box that contains its members", () => {
+    const groups = { "digest bundle": ["The Lifecycle You Choose", "Agent / CI / Operator"] };
+    const layout = layoutIr(ir, { groups });
+    expect(layout.groups).toHaveLength(1);
+    const box = layout.groups[0];
+    expect(box.title).toBe("digest bundle");
+    // Every member node sits inside the box extents (y-up centers).
+    const within = (id: string) => {
+      const n = layout.nodes.find((p) => p.id === id)!;
+      return Math.abs(n.x - box.x) <= box.w / 2 && Math.abs(n.y - box.y) <= box.h / 2;
+    };
+    expect(within("The Lifecycle You Choose")).toBe(true);
+    expect(within("Agent / CI / Operator")).toBe(true);
+  });
+
+  it("has no group boxes when none are declared", () => {
+    expect(layoutIr(ir).groups).toHaveLength(0);
+  });
+
   it("respects rankdir (BT flips the vertical order vs TB)", () => {
     const tb = layoutIr(ir, { rankdir: "TB" });
     const bt = layoutIr(ir, { rankdir: "BT" });

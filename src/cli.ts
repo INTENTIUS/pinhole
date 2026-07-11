@@ -345,8 +345,11 @@ async function runRender(args: string[]): Promise<number> {
         ]),
       );
       const hideTitle = noTitle || (!title && !subtitle);
-      const layout = layoutIr(ir, { style, rankdir, overrides, fit: true });
-      const svg = renderSvg(ir, layout, { title, subtitle, theme, tier, style, fit: true, hideTitle, overrides, animate: { pulse, flow } });
+      // Titled groups come from `groups.byStack` (name → node ids) — a boundary
+      // box per group, members kept together.
+      const groups = ir.groups?.byStack;
+      const layout = layoutIr(ir, { style, rankdir, overrides, fit: true, groups });
+      const svg = renderSvg(ir, layout, { title, subtitle, theme, tier, style, fit: true, hideTitle, overrides, groups: layout.groups, animate: { pulse, flow } });
       if (html) { await writeFile(html, renderHtml(ir, svg, { title, theme })); note(html); }
       if (out) { await writeFile(out, svg); note(out); }
       if (!out && !html && !json) process.stdout.write(svg);

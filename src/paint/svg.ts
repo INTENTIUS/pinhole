@@ -78,6 +78,16 @@ export class Canvas {
     }
   }
 
+  /** A titled boundary region behind a group of cards (concept diagrams). A soft
+   * panel fill + border, with the group name in the top gutter. Drawn before the
+   * cards so they sit on top. */
+  groupBox(x: number, y: number, w: number, h: number, title?: string): void {
+    this.body += `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="16" fill="${this.c("bg1")}" fill-opacity="0.6" stroke="${this.c("neutralStroke")}" stroke-width="1.2"/>`;
+    if (title) {
+      this.body += `<text x="${x + 18}" y="${y + 23}" fill="${this.c("textMuted")}" font-size="12" font-weight="700" letter-spacing=".5">${esc(title)}</text>`;
+    }
+  }
+
   /** Portable status card (native SVG text): accent bar, type icon, title,
    * sub-label, and field rows. Works as a static .svg / `<img>` / GitHub. */
   nodeCard(
