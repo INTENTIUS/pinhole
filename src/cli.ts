@@ -172,6 +172,7 @@ async function runRender(args: string[]): Promise<number> {
   let title: string | undefined;
   let subtitle: string | undefined;
   let concept = false; // paint a hand-authored --ir graph directly (no chant)
+  let noTitle = false; // drop the title band (docs supply their own caption)
   let rankdir: "TB" | "BT" | "LR" | "RL" = "TB";
   let themeName: string | undefined;
   let tier: "portable" | "rich" = "portable";
@@ -197,6 +198,7 @@ async function runRender(args: string[]): Promise<number> {
     else if (a === "--title") title = args[++i];
     else if (a === "--subtitle") subtitle = args[++i];
     else if (a === "--concept") concept = true;
+    else if (a === "--no-title") noTitle = true;
     else if (a === "--rankdir") rankdir = (args[++i] as typeof rankdir) ?? "TB";
     else if (a === "--theme") themeName = args[++i];
     else if (a === "--rich") tier = "rich";
@@ -342,8 +344,9 @@ async function runRender(args: string[]): Promise<number> {
           { fields: Object.entries(n.attrs).map(([label, value]) => ({ label, value: String(value) })).slice(0, 4) },
         ]),
       );
+      const hideTitle = noTitle || (!title && !subtitle);
       const layout = layoutIr(ir, { style, rankdir, overrides, fit: true });
-      const svg = renderSvg(ir, layout, { title, subtitle, theme, tier, style, fit: true, overrides, animate: { pulse, flow } });
+      const svg = renderSvg(ir, layout, { title, subtitle, theme, tier, style, fit: true, hideTitle, overrides, animate: { pulse, flow } });
       if (html) { await writeFile(html, renderHtml(ir, svg, { title, theme })); note(html); }
       if (out) { await writeFile(out, svg); note(out); }
       if (!out && !html && !json) process.stdout.write(svg);

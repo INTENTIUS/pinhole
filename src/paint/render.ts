@@ -83,6 +83,9 @@ export interface RenderOptions {
   fit?: boolean;
   /** Per-node presentation overrides, keyed by node id. */
   overrides?: Record<string, NodeOverride>;
+  /** Drop the title band entirely — no heading, no reserved space. For embedding
+   * where the surrounding context (a docs figure caption) supplies the heading. */
+  hideTitle?: boolean;
   /** Ambient animation (semantic motion; reduced-motion guarded in CSS). */
   animate?: {
     /** Node ids to emphasize (pulse). */
@@ -105,21 +108,26 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
   // nothing to post-scale (#509). Map into a px canvas with a title band on top,
   // flipping y so the graph reads top-to-bottom.
   const pos = new Map(layout.nodes.map((n) => [n.id, n]));
+  const band = opts.hideTitle ? 0 : TITLE_BAND;
   // Canvas must also hold the title band text, which can be wider than a narrow
   // graph (e.g. a 3-node stack under a long heading) — size to whichever is wider.
-  const titlePx = MARGIN + Math.max((opts.title ?? "").length * 15.6, (opts.subtitle ?? "").length * 7.5) + MARGIN;
+  const titlePx = opts.hideTitle
+    ? 0
+    : MARGIN + Math.max((opts.title ?? "").length * 15.6, (opts.subtitle ?? "").length * 7.5) + MARGIN;
   const W = Math.ceil(Math.max(layout.width + MARGIN * 2, titlePx));
-  const H = Math.ceil(layout.height + MARGIN * 2 + TITLE_BAND);
+  const H = Math.ceil(layout.height + MARGIN * 2 + band);
 
   const place = (id: string): { cx: number; cy: number } | undefined => {
     const p = pos.get(id);
     if (!p) return undefined;
-    return { cx: MARGIN + p.x, cy: MARGIN + TITLE_BAND + (layout.height - p.y) };
+    return { cx: MARGIN + p.x, cy: MARGIN + band + (layout.height - p.y) };
   };
 
   const c = new Canvas(W, H, theme);
-  const subtitle = opts.subtitle ?? `${ir.nodes.length} resources · ${ir.edges.length} references`;
-  c.title(MARGIN, 56, opts.title ?? "Infrastructure", subtitle);
+  if (!opts.hideTitle) {
+    const subtitle = opts.subtitle ?? `${ir.nodes.length} resources · ${ir.edges.length} references`;
+    c.title(MARGIN, 56, opts.title ?? "Infrastructure", subtitle);
+  }
 
   // Edges first (connect at layout-point centers) so cards sit on top.
   for (const e of ir.edges) {
