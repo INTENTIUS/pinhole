@@ -23,4 +23,19 @@ export {
 } from "./icons.ts";
 export { type Field, MAX_FIELDS, defaultFields, resolveFields } from "./labels.ts";
 export { Canvas, type Status } from "./paint/svg.ts";
-export { renderSvg, type RenderOptions, type NodeOverride } from "./paint/render.ts";
+export {
+  renderSvg,
+  cardSizes,
+  cardFootprint,
+  type RenderOptions,
+  type NodeOverride,
+  type NodeStyle,
+  type GroupBox,
+} from "./paint/render.ts";
+export {
+  layoutIr,
+  layoutArchitecture,
+  type ConceptLayout,
+  type ConceptLayoutOptions,
+} from "./concept.ts";
+export { renderHtml, type HtmlOptions } from "./html.ts";
