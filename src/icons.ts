@@ -41,6 +41,8 @@ export const GENERIC_GLYPHS: Record<string, string> = {
   user: `<circle cx="12" cy="8" r="4"/><path d="M5 20c0-4 3.5-6 7-6s7 2 7 6"/>`,
   internet: `<path d="M6.5 17.5a4 4 0 0 1 0-8 5 5 0 0 1 9.7-1.4A3.6 3.6 0 0 1 17.5 17.5z"/>`,
   pipeline: `<circle cx="5" cy="12" r="2.5"/><circle cx="12" cy="12" r="2.5"/><circle cx="19" cy="12" r="2.5"/><path d="M7.5 12h2M14.5 12h2"/>`,
+  bucket: `<path d="M5 6h14l-1.4 13a1 1 0 0 1-1 .9H7.4a1 1 0 0 1-1-.9z"/><path d="M4 6h16"/>`,
+  table: `<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M9 5v14"/>`,
 };
 
 /** Keyword heuristics mapping a resource kind to a generic category. First match wins. */
@@ -123,3 +125,48 @@ registerPack({
   lexicon: "gitlab",
   iconFor: (kind) => (/job/i.test(kind) ? "pipeline" : undefined),
 });
+
+/**
+ * AWS pack (#75) — precise `CloudFormation type → glyph` for the common services,
+ * more reliable than the keyword heuristic and the base for architecture
+ * diagrams (`chant graph --live`). Glyphs are the bundled **license-clean** line
+ * set (geometry only, themed colour). Provider-*authentic* AWS Architecture Icons
+ * (proprietary, coloured) are out of scope here — they'd be a separate opt-in
+ * pack a project installs under Amazon's icon-set terms and registers to override
+ * this one. Unknown kinds fall through to the heuristic.
+ */
+const AWS_ICONS: Record<string, string> = {
+  "AWS::EC2::VPC": "network",
+  "AWS::EC2::Subnet": "subnet",
+  "AWS::EC2::SecurityGroup": "firewall",
+  "AWS::EC2::Instance": "compute",
+  "AWS::EC2::InternetGateway": "gateway",
+  "AWS::EC2::NatGateway": "gateway",
+  "AWS::EC2::RouteTable": "route",
+  "AWS::EC2::Route": "route",
+  "AWS::ElasticLoadBalancingV2::LoadBalancer": "loadbalancer",
+  "AWS::ElasticLoadBalancingV2::TargetGroup": "loadbalancer",
+  "AWS::ElasticLoadBalancingV2::Listener": "loadbalancer",
+  "AWS::ECS::Cluster": "container",
+  "AWS::ECS::Service": "container",
+  "AWS::ECS::TaskDefinition": "container",
+  "AWS::EKS::Cluster": "container",
+  "AWS::Lambda::Function": "function",
+  "AWS::RDS::DBInstance": "database",
+  "AWS::RDS::DBCluster": "database",
+  "AWS::DynamoDB::Table": "table",
+  "AWS::S3::Bucket": "bucket",
+  "AWS::SNS::Topic": "queue",
+  "AWS::SQS::Queue": "queue",
+  "AWS::IAM::Role": "user",
+  "AWS::KMS::Key": "secret",
+  "AWS::SecretsManager::Secret": "secret",
+  "AWS::Route53::HostedZone": "dns",
+  "AWS::CloudFront::Distribution": "internet",
+  "AWS::ApiGateway::RestApi": "loadbalancer",
+};
+export const awsIconPack: PresentationPack = {
+  lexicon: "aws",
+  iconFor: (kind) => AWS_ICONS[kind],
+};
+registerPack(awsIconPack);

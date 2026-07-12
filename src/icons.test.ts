@@ -1,10 +1,12 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import {
   GENERIC_GLYPHS,
   categoryForKind,
   resolveGlyph,
   registerPack,
+  getPack,
   clearPacks,
+  awsIconPack,
 } from "./icons.ts";
 
 afterEach(() => {
@@ -82,5 +84,25 @@ describe("resolveGlyph (chain)", () => {
 
   it("an unknown override key degrades to generic", () => {
     expect(resolveGlyph({ lexicon: "x", kind: "y" }, { override: "nope" }).name).toBe("generic");
+  });
+});
+
+describe("aws icon pack (#75)", () => {
+  // The file's afterEach clears packs (restoring only gitlab), so re-register.
+  beforeEach(() => registerPack(awsIconPack));
+
+  it("maps common AWS types precisely", () => {
+    const pack = getPack("aws")!;
+    expect(pack.iconFor("AWS::RDS::DBInstance")).toBe("database");
+    expect(pack.iconFor("AWS::S3::Bucket")).toBe("bucket");
+    expect(pack.iconFor("AWS::DynamoDB::Table")).toBe("table");
+    expect(pack.iconFor("AWS::EC2::SecurityGroup")).toBe("firewall");
+    expect(pack.iconFor("AWS::ElasticLoadBalancingV2::LoadBalancer")).toBe("loadbalancer");
+  });
+  it("falls through to the heuristic for unmapped kinds", () => {
+    expect(getPack("aws")!.iconFor("AWS::Weird::Thing")).toBeUndefined();
+  });
+  it("resolveGlyph uses the pack for aws nodes", () => {
+    expect(resolveGlyph({ lexicon: "aws", kind: "AWS::S3::Bucket" }).name).toBe("bucket");
   });
 });
