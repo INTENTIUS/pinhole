@@ -45,6 +45,9 @@ jobs:
           # No registry-url on purpose: it would write an .npmrc with a
           # placeholder token that 404s; without it, npm publish uses the OIDC
           # id-token via the package's trusted-publisher record.
+      # OIDC trusted publishing needs npm >= 11.5.1; Node 22 ships npm 10.x,
+      # which skips the token exchange and fails with ENEEDAUTH. Upgrade first.
+      - run: npm install -g npm@latest
       - run: npm ci
       - name: build
         run: npm run build
