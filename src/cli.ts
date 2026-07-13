@@ -46,6 +46,9 @@ the full name and attrs come from hover and the click inspector.
 --morph (with --html) writes a multi-view artifact that morphs between detail
 tiers — a composite expands into its members in place, shared nodes keep their
 identity. Needs at least two distinct tiers.
+--frames <a.json,b.json,...> (with --morph --html) morphs an ordered sequence of
+pre-captured IR frames (time), identity preserved by node id — the primitive
+behind a time playhead. No chant project needed.
 --containment (experimental) drops low-signal plumbing and renders the VPC as a
 boundary with its resources inside; only dependency refs stay as lines. Click
 the VPC (in --html) to switch between app and network views.
@@ -180,6 +183,7 @@ async function runRender(args: string[]): Promise<number> {
   let tier: "portable" | "rich" = "portable";
   let style: "card" | "icon" = "card";
   let morph = false;
+  let frameFiles: string[] = []; // `--frames a.json,b.json` — morph over pre-captured IR frames (time)
   let containment = false;
   let focus: Focus = "app";
   let hintsPath: string | undefined;
@@ -206,6 +210,7 @@ async function runRender(args: string[]): Promise<number> {
     else if (a === "--rich") tier = "rich";
     else if (a === "--icon" || a === "--icons") style = "icon";
     else if (a === "--morph") morph = true;
+    else if (a === "--frames") { morph = true; frameFiles = (args[++i] ?? "").split(",").map((s) => s.trim()).filter(Boolean); }
     else if (a === "--containment" || a === "--boxes") containment = true;
     else if (a === "--focus") focus = (args[++i] as Focus) ?? "app";
     else if (a === "--hints") hintsPath = args[++i];
@@ -228,8 +233,8 @@ async function runRender(args: string[]): Promise<number> {
 
   const dir = dirs[0]; // morph/normal render operate on a single project
   const stackCount = dirs.length + irFiles.length;
-  if (stackCount === 0) {
-    process.stderr.write(`pinhole: render needs a project directory (or --ir <file>)\n\n${USAGE}`);
+  if (stackCount === 0 && frameFiles.length === 0) {
+    process.stderr.write(`pinhole: render needs a project directory (or --ir <file>, or --frames <a.json,...>)\n\n${USAGE}`);
     return 2;
   }
 
@@ -248,12 +253,24 @@ async function runRender(args: string[]): Promise<number> {
     const theme = getTheme(themeName);
 
     if (morph) {
-      if (stackCount > 1) return fail(new Error("--morph renders a single project; multiple stacks / --ir need --containment"), json);
-      if (!dir) return fail(new Error("--morph needs a project directory (it graphs detail tiers via chant, not --ir)"), json);
       if (!html) return fail(new Error("--morph writes an interactive artifact; pass --html <file>"), json);
-      const views = await buildMorphViews(dir, opts, title);
+      let views: MorphView[];
+      if (frameFiles.length > 0) {
+        // Morph over an ordered sequence of pre-captured IR frames (time), each
+        // laid out on its own (dagre). Identity is preserved by node id, so a node
+        // present in frames 1 and 3 but not 2 animates out and back. No chant needed.
+        views = [];
+        for (const f of frameFiles) {
+          const ir = JSON.parse(await readFile(f, "utf8")) as GraphIR;
+          views.push({ name: basename(f), ir, layout: layoutIr(ir) });
+        }
+      } else {
+        if (stackCount > 1) return fail(new Error("--morph renders a single project; multiple stacks / --ir need --containment"), json);
+        if (!dir) return fail(new Error("--morph needs a project directory (detail tiers) or --frames <a.json,b.json,...>"), json);
+        views = await buildMorphViews(dir, opts, title);
+      }
       if (views.length < 2) {
-        return fail(new Error("--morph needs at least two distinct views (detail tiers); this graph collapses to one"), json);
+        return fail(new Error("--morph needs at least two views (detail tiers, or --frames)"), json);
       }
       await writeFile(html, renderMorphHtml(views, { title, theme }));
       note(html, ` (${views.length} views)`);

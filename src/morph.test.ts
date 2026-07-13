@@ -73,4 +73,30 @@ describe("renderMorphHtml", () => {
     expect(META.net.kind).toBe("VpcDefault");
     expect(META.net.attrs.cidr).toBe("10.0.0.0/16");
   });
+
+  // #81: the same engine morphs an ordered sequence of *time* frames (not just
+  // detail tiers). A node present in frames 1 and 3 but absent in 2 must keep its
+  // identity — animate out and back — driven by node id.
+  it("morphs a time-frame sequence, preserving identity across a gap", () => {
+    const frame = (nodes: string[]): GraphIR => ({
+      nodes: nodes.map((id) => ({ id, kind: "K", lexicon: "aws", attrs: {} })),
+      edges: [],
+      groups: {},
+    });
+    const lay = (ids: string[]) => ({ width: 200, height: 100, nodes: ids.map((id, i) => ({ id, x: 40 + i * 60, y: 50 })) });
+    const t: MorphView[] = [
+      { name: "t0", ir: frame(["vpc", "sg"]), layout: lay(["vpc", "sg"]) },
+      { name: "t1", ir: frame(["vpc"]), layout: lay(["vpc"]) }, // sg gone
+      { name: "t2", ir: frame(["vpc", "sg"]), layout: lay(["vpc", "sg"]) }, // sg back
+    ];
+    const out = renderMorphHtml(t, { title: "Time" });
+    const VIEWS = JSON.parse(out.match(/const VIEWS = (\[[\s\S]*?\]);\n/)![1].replace(/\\u003c/g, "<"));
+    expect(VIEWS).toHaveLength(3);
+    // one badge for "sg" across all frames (identity, not re-created)
+    expect((out.match(/data-node-id="sg"/g) || []).length).toBe(1);
+    // present at t0 and t2, absent at t1
+    expect(Object.keys(VIEWS[0].pos)).toContain("sg");
+    expect(Object.keys(VIEWS[1].pos)).not.toContain("sg");
+    expect(Object.keys(VIEWS[2].pos)).toContain("sg");
+  });
 });
