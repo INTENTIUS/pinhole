@@ -1,6 +1,6 @@
 {
   "name": "@intentius/pinhole",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "description": "Agentic infra diagrammer — paints chant's graph IR into diagrams, gated by lint at every step",
   "publishConfig": {
