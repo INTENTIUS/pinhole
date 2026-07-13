@@ -39,3 +39,4 @@ export {
   type ConceptLayoutOptions,
 } from "./concept.ts";
 export { renderHtml, type HtmlOptions } from "./html.ts";
+export { renderMorphHtml, type MorphView, type MorphOptions } from "./morph.ts";
