@@ -1,6 +1,6 @@
 {
   "name": "@intentius/pinhole",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Agentic infra diagrammer — paints chant's graph IR into diagrams, gated by lint at every step",
   "publishConfig": {
@@ -8,6 +8,15 @@
   },
   "bin": {
     "pinhole": "./bin/pinhole.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "bin",
@@ -17,7 +26,10 @@
     "tsc": "tsc --noEmit",
     "test": "vitest run",
     "gen:agents": "node --experimental-strip-types -e \"import('./src/guide.ts').then(m=>process.stdout.write(m.GUIDE))\" > AGENTS.md",
-    "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --external:@intentius/chant --outfile=dist/cli.js && chmod +x dist/cli.js",
+    "build:lib": "esbuild src/index.ts --bundle --platform=node --format=esm --external:@intentius/chant --outfile=dist/index.js",
+    "build:cli": "esbuild src/cli.ts --bundle --platform=node --format=esm --external:@intentius/chant --outfile=dist/cli.js && chmod +x dist/cli.js",
+    "build:types": "tsc -p tsconfig.build.json",
+    "build": "npm run build:lib && npm run build:cli && npm run build:types",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
