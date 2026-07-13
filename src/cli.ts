@@ -1,4 +1,6 @@
 import { writeFile, readFile } from "node:fs/promises";
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { basename, resolve } from "node:path";
 import { graphIr, graphLayout, lint, type GraphOptions } from "./chant.ts";
 import { getTheme } from "./theme.ts";
@@ -483,7 +485,19 @@ async function buildMorphViews(dir: string, opts: GraphOptions, _title?: string)
   return views;
 }
 
-// Allow `node dist/cli.js ...` directly as well as via the bin launcher.
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Run when invoked directly (`node dist/cli.js …` or the bin launcher), not when
+// imported. realpath both sides: through a symlinked path the loader sets
+// import.meta.url to the realpath while argv[1] keeps the symlink, so a raw string
+// compare silently skips run().
+function isMainModule(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+if (isMainModule()) {
   run(process.argv.slice(2)).then((code) => process.exit(code));
 }
