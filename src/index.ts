@@ -40,3 +40,6 @@ export {
 } from "./concept.ts";
 export { renderHtml, type HtmlOptions } from "./html.ts";
 export { renderMorphHtml, type MorphView, type MorphOptions } from "./morph.ts";
+// Multi-stack composition (#513/#42/#46): merge N project IRs into one — namespaced
+// ids, byStack grouping, and cross-stack edges from export↔import handle matching.
+export { composeStacks, shortStackNames, isImportSocket } from "./compose.ts";
