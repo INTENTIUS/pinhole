@@ -21,6 +21,7 @@ export type ThemeTokenName =
   | "accentFill" | "accentStroke" | "accentBar"
   | "goodFill" | "goodStroke" | "goodBar"
   | "warnFill" | "warnStroke" | "warnBar"
+  | "runtimeFill" | "runtimeStroke" | "runtimeBar"
   | "selectedStroke";
 
 export type ThemeTokens = Record<ThemeTokenName, string>;
@@ -38,6 +39,7 @@ export const TOKEN_NAMES: ThemeTokenName[] = [
   "accentFill", "accentStroke", "accentBar",
   "goodFill", "goodStroke", "goodBar",
   "warnFill", "warnStroke", "warnBar",
+  "runtimeFill", "runtimeStroke", "runtimeBar",
   "selectedStroke",
 ];
 
@@ -51,6 +53,7 @@ const dark: Theme = {
     accentFill: "#141A24", accentStroke: "#4C8DFF", accentBar: "#4C8DFF",
     goodFill: "#102A1E", goodStroke: "#1F6B49", goodBar: "#43DC94",
     warnFill: "#2A1417", warnStroke: "#7A2C30", warnBar: "#FF5A5F",
+    runtimeFill: "#0E2328", runtimeStroke: "#1E6A74", runtimeBar: "#3DD2E0",
     selectedStroke: "#4C8DFF",
   },
 };
@@ -65,6 +68,7 @@ const light: Theme = {
     accentFill: "#EAF1FF", accentStroke: "#4C8DFF", accentBar: "#4C8DFF",
     goodFill: "#E6F7EE", goodStroke: "#1F6B49", goodBar: "#1FAE6B",
     warnFill: "#FDEAEA", warnStroke: "#C0392B", warnBar: "#E5484D",
+    runtimeFill: "#E4F7FA", runtimeStroke: "#12808C", runtimeBar: "#0FA9BA",
     selectedStroke: "#4C8DFF",
   },
 };
@@ -79,6 +83,7 @@ const blueprint: Theme = {
     accentFill: "#103E5E", accentStroke: "#5FC9E8", accentBar: "#5FC9E8",
     goodFill: "#0E3F3A", goodStroke: "#2E9C8E", goodBar: "#4FE3C8",
     warnFill: "#3E2230", warnStroke: "#B5536B", warnBar: "#FF6F91",
+    runtimeFill: "#132E3C", runtimeStroke: "#2E7A93", runtimeBar: "#54C2E0",
     selectedStroke: "#FFD479",
   },
 };
@@ -97,6 +102,7 @@ const aws: Theme = {
     accentFill: "#243142", accentStroke: "#FF9900", accentBar: "#FF9900",
     goodFill: "#16331F", goodStroke: "#1F7A3D", goodBar: "#56C271",
     warnFill: "#3A1E18", warnStroke: "#D13212", warnBar: "#FF6B47",
+    runtimeFill: "#10262B", runtimeStroke: "#1D6E7A", runtimeBar: "#38C4D4",
     selectedStroke: "#FF9900",
   },
 };

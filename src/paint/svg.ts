@@ -12,7 +12,7 @@ import { type Theme, type ThemeTokenName, v, defs } from "../theme.ts";
 import type { Field } from "../labels.ts";
 
 /** Drives the color of a node card. */
-export type Status = "neutral" | "accent" | "good" | "warn" | "selected";
+export type Status = "neutral" | "accent" | "good" | "warn" | "runtime" | "selected";
 
 /** The reference an edge encodes — `from` references `to` through `via` (and, at
  * detail T3, the producer attribute `toAttr`). Stamped onto the edge for rollover. */
@@ -37,6 +37,12 @@ function statusTokens(s: Status): StatusTokens {
       return { fill: "goodFill", stroke: "goodStroke", bar: "goodBar" };
     case "warn":
       return { fill: "warnFill", stroke: "warnStroke", bar: "warnBar" };
+    case "runtime":
+      // A runtime child (a Pod its Deployment's controller created — expected,
+      // never drift) reads apart from managed/foreign/pending AND from
+      // neutral: falling through to neutral painted "the cluster made this"
+      // exactly like "nobody looked at this".
+      return { fill: "runtimeFill", stroke: "runtimeStroke", bar: "runtimeBar" };
     case "selected":
       return { fill: "accentFill", stroke: "selectedStroke", bar: "accentBar" };
     default:
