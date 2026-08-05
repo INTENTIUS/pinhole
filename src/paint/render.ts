@@ -205,7 +205,7 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
   return c.toString();
 }
 
-const STATUS_VALUES = new Set<Status>(["neutral", "accent", "good", "warn", "selected"]);
+const STATUS_VALUES = new Set<Status>(["neutral", "accent", "good", "warn", "runtime", "selected"]);
 
 /** A node's status colour. Concept diagrams set it with a reserved `_status`
  * attr (accent / good / warn / selected) — e.g. a decision node (accent) or an

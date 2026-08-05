@@ -148,3 +148,28 @@ describe("renderSvg icon style", () => {
     expect(svg).not.toContain("region"); // no fields on an icon node
   });
 });
+
+describe("runtime status (behold#144)", () => {
+  it("paints a runtime child with its own tokens, not neutral's", () => {
+    const runtimeIr: GraphIR = {
+      nodes: [
+        { id: "pod", kind: "K8s::Core::Pod", lexicon: "k8s", attrs: { _status: "runtime" } },
+        { id: "ghost", kind: "K8s::Core::Pod", lexicon: "k8s", attrs: {} },
+      ],
+      edges: [],
+      groups: {},
+    };
+    const runtimeLayout: Layout = {
+      width: 200,
+      height: 200,
+      nodes: [
+        { id: "pod", x: 100, y: 180 },
+        { id: "ghost", x: 100, y: 20 },
+      ],
+    };
+    const svg = renderSvg(runtimeIr, runtimeLayout);
+    expect(svg).toContain("--pin-runtimeBar");
+    // The unstatused node still rides neutral — runtime is opt-in per node.
+    expect(svg).toContain("--pin-neutralBar");
+  });
+});
