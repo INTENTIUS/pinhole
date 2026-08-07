@@ -32,6 +32,16 @@ describe("defaultFields", () => {
     // short companions still show
     expect(defaultFields(node({ desc: "y".repeat(50), tier: "db" }))).toEqual([{ label: "tier", value: "db" }]);
   });
+
+  it("skips reserved `_`-prefixed attrs — the paint already says it", () => {
+    // `_status` sorts before every lowercase key, so before this filter it
+    // reliably claimed a card slot on any status-bearing overlay node.
+    const f = defaultFields(node({ _status: "runtime", _unobserved: "filtered", replicas: 3, tier: "db" }));
+    expect(f).toEqual([
+      { label: "replicas", value: "3" },
+      { label: "tier", value: "db" },
+    ]);
+  });
 });
 
 describe("resolveFields (chain)", () => {

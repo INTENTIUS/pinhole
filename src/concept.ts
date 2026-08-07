@@ -1,6 +1,6 @@
 import dagre from "@dagrejs/dagre";
 import type { GraphIR, Layout } from "./ir.ts";
-import { cardSizes, type NodeStyle, type NodeOverride, type GroupBox } from "./paint/render.ts";
+import { cardSizes, statusFor, type NodeStyle, type NodeOverride, type GroupBox } from "./paint/render.ts";
 
 /**
  * Lay out an arbitrary graph IR locally, with dagre, so the card painter can draw
@@ -62,7 +62,11 @@ export function layoutIr(ir: GraphIR, opts: ConceptLayoutOptions = {}): ConceptL
   const clusterId = (title: string) => `__grp__:${title}`;
   for (const [title, ids] of groupEntries) {
     const cid = clusterId(title);
-    g.setNode(cid, {});
+    // Members give a cluster its size; a cluster whose listed members are all
+    // absent from the graph is childless to dagre and would lay out with
+    // undefined dimensions (a NaN rect downstream). Default dims make it an
+    // honest empty box instead; dagre recomputes them whenever members exist.
+    g.setNode(cid, { width: 200, height: 90 });
     for (const id of ids) {
       if (g.hasNode(id)) g.setParent(id, cid);
     }
@@ -139,7 +143,12 @@ export function layoutArchitecture(
     const s = sizes[n.id] ?? { w: 180, h: 60 };
     g.setNode(n.id, { width: s.w, height: s.h });
   }
-  for (const c of containerIds) g.setNode(cId(c), {});
+  // A container with members gets its size from dagre's compound layout; a
+  // childless one (an estate's declared-but-empty namespace) is just a node to
+  // dagre and needs dimensions of its own, or it lays out as `undefined` and
+  // the box renders at NaN. The default is deliberately box-shaped, not
+  // card-shaped: an empty boundary is still a boundary.
+  for (const c of containerIds) g.setNode(cId(c), { width: 200, height: 90 });
   // Nest: each member sits in its container's box (a member that's itself a
   // container nests as a sub-box).
   for (const [m, c] of parentOf) {
@@ -170,7 +179,18 @@ export function layoutArchitecture(
       if (!b) return undefined;
       const node = nodeById.get(id);
       const title = node?.kind ? `${id}  ·  ${shortKind(node.kind)}` : id;
-      return { title, x: b.x, y: height - b.y, w: b.width, h: b.height, depth: depthOf(id) };
+      // A container that is a real IR node keeps saying what its card would
+      // have said: its `_status` tints the box border + title.
+      const status = node ? statusFor(node) : undefined;
+      return {
+        title,
+        x: b.x,
+        y: height - b.y,
+        w: b.width,
+        h: b.height,
+        depth: depthOf(id),
+        ...(status && status !== "neutral" ? { status } : {}),
+      };
     })
     .filter((b): b is GroupBox => b !== undefined);
 
