@@ -33,6 +33,11 @@ export interface GroupBox {
   /** Nesting depth (0 = outermost). Boxes draw outer-first so inner boxes and
    * cards sit on top. Absent = flat (depth 0). */
   depth?: number;
+  /** Status tint for the box border + title (the card `_status` vocabulary).
+   * `layoutArchitecture` sets it from the container node's own `_status` when
+   * the container id is a real IR node; callers building boxes by hand set it
+   * directly. Absent/neutral = the untinted panel. */
+  status?: Status;
 }
 
 interface FootprintOptions {
@@ -150,7 +155,7 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
   for (const grp of orderedGroups) {
     const cx = MARGIN + grp.x;
     const cy = MARGIN + band + (layout.height - grp.y);
-    c.groupBox(Math.round(cx - grp.w / 2), Math.round(cy - grp.h / 2), Math.round(grp.w), Math.round(grp.h), grp.title);
+    c.groupBox(Math.round(cx - grp.w / 2), Math.round(cy - grp.h / 2), Math.round(grp.w), Math.round(grp.h), grp.title, grp.status);
   }
 
   // Edges (connect at layout-point centers) so cards sit on top.
@@ -209,8 +214,10 @@ const STATUS_VALUES = new Set<Status>(["neutral", "accent", "good", "warn", "run
 
 /** A node's status colour. Concept diagrams set it with a reserved `_status`
  * attr (accent / good / warn / selected) — e.g. a decision node (accent) or an
- * affected file (warn). The attr is filtered out of the visible fields upstream. */
-function statusFor(node: IRNode): Status {
+ * affected file (warn). The attr is filtered out of the visible fields upstream.
+ * Exported so the layouts can read the same vocabulary off a container node
+ * when they turn it into a `GroupBox`. */
+export function statusFor(node: IRNode): Status {
   const s = (node.attrs as Record<string, unknown>)?._status;
   return typeof s === "string" && STATUS_VALUES.has(s as Status) ? (s as Status) : "neutral";
 }

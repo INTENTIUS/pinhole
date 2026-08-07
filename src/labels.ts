@@ -37,10 +37,16 @@ function truncate(s: string, n = 22): string {
 }
 
 /** Default template: a couple of the node's *short* scalar attrs, sorted. Skips
- * refs/objects (popover-only) and long values (descriptions, ARNs → popover). */
+ * refs/objects (popover-only), long values (descriptions, ARNs → popover), and
+ * `_`-prefixed attrs — those are reserved channels (`_status`, `_unobserved`,
+ * `_byo`) already expressed by the card's paint, not facts to print. The CLI
+ * always filtered them out of its curated templates; the library default
+ * didn't, so every status-bearing card a consumer rendered spent one of its
+ * two field slots on `_status: good` (`_` sorts before every lowercase key). */
 export function defaultFields(node: Pick<IRNode, "attrs">): Field[] {
   const out: Field[] = [];
   for (const key of Object.keys(node.attrs).sort()) {
+    if (key.startsWith("_")) continue; // reserved (e.g. _status) — painted, not printed
     const v = node.attrs[key];
     if (!isScalar(v)) continue;
     const value = String(v);

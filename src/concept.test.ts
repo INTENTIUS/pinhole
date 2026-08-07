@@ -149,6 +149,60 @@ describe("concept layout", () => {
     expect(subnet.w).toBeLessThan(vpc.w);
   });
 
+  it("architecture layout: a childless container still gets a finite box, not NaN", () => {
+    // A declared-but-empty namespace is a real boundary an estate renderer
+    // wants to draw. Before the default dims, dagre laid the childless
+    // compound node out with undefined extents and the SVG carried a NaN rect.
+    const arch: GraphIR = {
+      nodes: [
+        { id: "cluster", kind: "K3d::Cluster", lexicon: "k3d", attrs: {} },
+        { id: "web", kind: "K8s::Apps::Deployment", lexicon: "k8s", attrs: {} },
+      ],
+      edges: [],
+      groups: {},
+    };
+    const byContainer = { cluster: ["namespace empty", "namespace apps"], "namespace apps": ["web"], "namespace empty": [] };
+    const layout = layoutArchitecture(arch, byContainer);
+
+    const empty = layout.groups.find((g) => g.title === "namespace empty")!;
+    expect(empty).toBeDefined();
+    for (const v of [empty.x, empty.y, empty.w, empty.h]) expect(Number.isFinite(v)).toBe(true);
+    expect(empty.w).toBeGreaterThan(0);
+
+    const svg = renderSvg(arch, layout, { hideTitle: true, groups: layout.groups });
+    expect(svg).not.toContain("NaN");
+    expect(svg).toContain("namespace empty");
+  });
+
+  it("architecture layout: a container node's _status tints its box", () => {
+    const arch: GraphIR = {
+      nodes: [
+        { id: "cluster", kind: "AWS::EKS::Cluster", lexicon: "aws", attrs: { _status: "good" } },
+        { id: "web", kind: "K8s::Apps::Deployment", lexicon: "k8s", attrs: {} },
+      ],
+      edges: [],
+      groups: {},
+    };
+    const layout = layoutArchitecture(arch, { cluster: ["web"] });
+    expect(layout.groups.find((g) => g.title.startsWith("cluster"))!.status).toBe("good");
+
+    const svg = renderSvg(arch, layout, { hideTitle: true, groups: layout.groups });
+    // The box border reads the good stroke token, not the neutral one.
+    expect(svg).toContain("--pin-goodStroke");
+  });
+
+  it("layoutIr: a group whose members are absent from the graph lays out finite", () => {
+    const g: GraphIR = {
+      nodes: [{ id: "a", kind: "T", lexicon: "", attrs: {} }],
+      edges: [],
+      groups: {},
+    };
+    const layout = layoutIr(g, { groups: { ghosts: ["not-a-node"] } });
+    const box = layout.groups.find((b) => b.title === "ghosts")!;
+    expect(box).toBeDefined();
+    for (const v of [box.x, box.y, box.w, box.h]) expect(Number.isFinite(v)).toBe(true);
+  });
+
   it("respects rankdir (BT flips the vertical order vs TB)", () => {
     const tb = layoutIr(ir, { rankdir: "TB" });
     const bt = layoutIr(ir, { rankdir: "BT" });
