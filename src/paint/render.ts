@@ -38,6 +38,12 @@ export interface GroupBox {
    * the container id is a real IR node; callers building boxes by hand set it
    * directly. Absent/neutral = the untinted panel. */
   status?: Status;
+  /** The container's identity (`layoutArchitecture`'s `byContainer` key),
+   * stamped onto the rect as `data-group-id` (pinhole#103) so downstream
+   * interaction — behold's hover/click matching — can address the box
+   * structurally instead of sniffing rx + sibling text. Absent for concept
+   * diagrams, whose groups have no container node behind them. */
+  id?: string;
 }
 
 interface FootprintOptions {
@@ -155,7 +161,15 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
   for (const grp of orderedGroups) {
     const cx = MARGIN + grp.x;
     const cy = MARGIN + band + (layout.height - grp.y);
-    c.groupBox(Math.round(cx - grp.w / 2), Math.round(cy - grp.h / 2), Math.round(grp.w), Math.round(grp.h), grp.title, grp.status);
+    c.groupBox(
+      Math.round(cx - grp.w / 2),
+      Math.round(cy - grp.h / 2),
+      Math.round(grp.w),
+      Math.round(grp.h),
+      grp.title,
+      grp.status,
+      grp.id,
+    );
   }
 
   // Edges (connect at layout-point centers) so cards sit on top.
