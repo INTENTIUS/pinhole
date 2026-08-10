@@ -94,6 +94,34 @@ stroke, no `fill="none"` — which is how a lexicon-native or provider-authentic
 token like the bundled glyphs. `viewBox` defaults to `0 0 24 24`; any other box
 is fitted to the icon slot, aspect preserved.
 
+An authored mark lands on a card whose fill pinhole chose, so `iconFor` gets a
+second argument saying which fill that is:
+
+```ts
+registerPack({
+  lexicon: "k8s",
+  iconFor: (kind, ctx) => ({
+    // a plate only where the mark's ink would die, not on every card
+    body: ctx?.ground?.includes("warnFill") ? PLATED_MARK : MARK,
+    colored: true,
+  }),
+});
+```
+
+`ctx.ground` is the exact `fill` attribute the painter puts on the shape under
+the glyph, in the same `var(--pin-<token>, <baked>)` form everything else is
+painted with — e.g. `var(--pin-warnFill, #2A1417)`. The token name tells you
+which ground was picked (that is, the node's status); the baked hex is what it
+looks like in the theme being rendered, which is what contrast math needs. A
+browser overriding `--pin-*` live can repaint the ground afterwards, so treat
+the hex as true for the requested theme, not forever.
+
+It is undefined where pinhole can't answer honestly — the containment views
+paint at partial opacity, so the glyph reads against a composite, not the fill.
+A pack that sees `undefined` should do whatever it did before there was a ground
+to ask about. The parameter is optional throughout: a pack written as
+`iconFor: (kind) => …` still type-checks and still resolves the same glyph.
+
 The `@intentius/pinhole/icons` subpath is the icon module on its own — no chant,
 no node builtins — so a browser bundle can register a pack without pulling the
 CLI's dependencies. It shares a module instance with the package root, so a pack

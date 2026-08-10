@@ -11,7 +11,7 @@
 import type { GraphIR } from "./ir.ts";
 import { getTheme, v, defs, type Theme } from "./theme.ts";
 import { resolveGlyph } from "./icons.ts";
-import { clip, esc, glyphMarkup } from "./paint/svg.ts";
+import { clip, esc, glyphMarkup, statusGround } from "./paint/svg.ts";
 import type { DiffStatus } from "./diff.ts";
 
 export interface StackedPlane { env: string; composites: GraphIR }
@@ -51,7 +51,9 @@ export function renderStacked(base: StackedPlane, target: StackedPlane, status: 
     const st = status[id];
     // the base plane is the baseline: only a *removed* node is tinted there.
     const t = tint(isBase ? (st === "removed" ? "removed" : "same") : st, isBase);
-    const glyph = resolveGlyph({ lexicon: n.lexicon, kind: n.kind });
+    // The diff tint rides the stroke and bar; the card fill stays neutral, so
+    // that is the ground under the glyph (#107).
+    const glyph = resolveGlyph({ lexicon: n.lexicon, kind: n.kind }, { ground: statusGround("neutral", theme) });
     const members = (n.attrs as { members?: number } | undefined)?.members;
     const dashed = (isBase && st === "removed") ? ` stroke-dasharray="4 4"` : "";
     return (

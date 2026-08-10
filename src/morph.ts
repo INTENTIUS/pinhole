@@ -13,7 +13,7 @@
 import type { GraphIR, IRNode } from "./ir.ts";
 import { getTheme, v, defs, THEMES, type Theme } from "./theme.ts";
 import { resolveGlyph, type Glyph } from "./icons.ts";
-import { clip, esc, glyphMarkup } from "./paint/svg.ts";
+import { clip, esc, glyphMarkup, statusGround } from "./paint/svg.ts";
 
 const MARGIN = 80;
 const TITLE_BAND = 90;
@@ -95,7 +95,14 @@ export function renderMorphHtml(views: MorphView[], opts: MorphOptions = {}): st
   }
 
   const badges = Object.keys(meta)
-    .map((id) => badge(id, resolveGlyph({ lexicon: meta[id].lexicon, kind: meta[id].kind }), theme))
+    .map((id) =>
+      badge(
+        id,
+        // Every morph badge is the neutral fill at full opacity (#107).
+        resolveGlyph({ lexicon: meta[id].lexicon, kind: meta[id].kind }, { ground: statusGround("neutral", theme) }),
+        theme,
+      ),
+    )
     .join("");
 
   const themeOptions = Object.keys(THEMES)

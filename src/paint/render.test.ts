@@ -241,3 +241,86 @@ describe("a pack's own glyphs reach the paint (#95, behold#227)", () => {
     expect(svg).not.toMatch(/<g transform="[^"]*"[^>]*fill="none"[^>]*><circle cx="16"/);
   });
 });
+
+describe("the painter tells the pack what ground it picked (#107)", () => {
+  const warnIr: GraphIR = {
+    nodes: [{ id: "api", kind: "K8s::Apps::Deployment", lexicon: "k8s", attrs: { _status: "warn" } }],
+    edges: [],
+    groups: {},
+  };
+  const warnLayout: Layout = { width: 200, height: 100, nodes: [{ id: "api", x: 100, y: 50 }] };
+
+  afterEach(() => {
+    clearPacks();
+    registerPack({ lexicon: "gitlab", iconFor: (k) => (/job/i.test(k) ? "pipeline" : undefined) });
+    registerPack(awsIconPack);
+  });
+
+  /** Register a pack that records the ground it was handed and returns a mark. */
+  const recordGround = (seen: Array<string | undefined>) => {
+    clearPacks();
+    registerPack({
+      lexicon: "k8s",
+      iconFor: (_k, ctx) => {
+        seen.push(ctx?.ground);
+        return { body: `<path d="M0 0h4"/>`, colored: true };
+      },
+    });
+  };
+
+  it("hands the pack the very string it paints the card with", () => {
+    const seen: Array<string | undefined> = [];
+    recordGround(seen);
+    const svg = renderSvg(warnIr, warnLayout);
+    // Pin the shape rather than trust it: the ground must be the `fill` on the
+    // card rect the glyph lands on, character for character.
+    const cardFill = svg.match(/<rect x="\d+" y="\d+" width="180"[^>]*fill="([^"]+)"/)![1];
+    expect(seen).toEqual([cardFill]);
+    // …and that string is the var(--pin-<token>, <baked>) form, naming the
+    // status token pinhole chose and the colour it bakes for this theme.
+    expect(cardFill).toBe(`var(--pin-warnFill, ${getTheme().tokens.warnFill})`);
+    expect(cardFill).toBe("var(--pin-warnFill, #2A1417)");
+  });
+
+  it("names the neutral fill for an untinted card, and follows the theme", () => {
+    const seen: Array<string | undefined> = [];
+    recordGround(seen);
+    renderSvg(
+      { nodes: [{ id: "api", kind: "K8s::Apps::Deployment", lexicon: "k8s", attrs: {} }], edges: [], groups: {} },
+      warnLayout,
+      { theme: getTheme("light") },
+    );
+    expect(seen).toEqual([v(getTheme("light"), "neutralFill")]);
+    expect(seen[0]).toBe("var(--pin-neutralFill, #FFFFFF)");
+  });
+
+  it("names the badge fill in the compact icon style too", () => {
+    const seen: Array<string | undefined> = [];
+    recordGround(seen);
+    const svg = renderSvg(warnIr, warnLayout, { style: "icon" });
+    const badgeFill = svg.match(/<rect x="\d+" y="\d+" width="48" height="48"[^>]*fill="([^"]+)"/)![1];
+    expect(seen).toEqual([badgeFill]);
+    expect(badgeFill).toBe("var(--pin-warnFill, #2A1417)");
+  });
+
+  it("a pack branching on the ground paints the variant it chose", () => {
+    clearPacks();
+    const PLATE = `<rect width="24" height="24" fill="#FFFFFF"/>`;
+    registerPack({
+      lexicon: "k8s",
+      iconFor: (_k, ctx) => ({
+        body: (ctx?.ground?.includes("warnFill") ? PLATE : "") + `<circle cx="12" cy="12" r="8" fill="#326ce5"/>`,
+        colored: true,
+      }),
+    });
+    expect(renderSvg(warnIr, warnLayout)).toContain(PLATE);
+    const calm: GraphIR = { ...warnIr, nodes: [{ ...warnIr.nodes[0], attrs: {} }] };
+    expect(renderSvg(calm, warnLayout)).not.toContain(PLATE);
+  });
+
+  it("leaves single-argument packs painting exactly what they did before", () => {
+    clearPacks();
+    registerPack({ lexicon: "k8s", iconFor: () => "container" });
+    expect(renderSvg(warnIr, warnLayout)).toContain(GENERIC_GLYPHS.container);
+  });
+});
