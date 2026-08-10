@@ -12,8 +12,8 @@
  */
 import type { GraphIR, IRNode } from "./ir.ts";
 import { getTheme, v, defs, THEMES, type Theme } from "./theme.ts";
-import { resolveGlyph } from "./icons.ts";
-import { clip, esc } from "./paint/svg.ts";
+import { resolveGlyph, type Glyph } from "./icons.ts";
+import { clip, esc, glyphMarkup } from "./paint/svg.ts";
 
 const MARGIN = 80;
 const TITLE_BAND = 90;
@@ -61,13 +61,12 @@ function viewCanvas(view: MorphView): { w: number; h: number } {
 }
 
 /** A glyph badge drawn at the origin (0,0) so a transform can place/move it. */
-function badge(id: string, glyph: string, theme: Theme): string {
-  const k = (26 / 24).toFixed(4);
+function badge(id: string, glyph: Glyph, theme: Theme): string {
   return (
     `<g class="pin-mnode" data-node-id="${esc(id)}" transform="translate(0,0)" style="opacity:0">` +
     `<rect x="-22" y="-22" width="44" height="44" rx="12" fill="${v(theme, "neutralFill")}" stroke="${v(theme, "neutralStroke")}" stroke-width="1.4"/>` +
     `<rect x="-22" y="-22" width="44" height="4" rx="2" fill="${v(theme, "neutralBar")}"/>` +
-    `<g transform="translate(-13 -12) scale(${k})" fill="none" stroke="${v(theme, "textFaint")}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${glyph}</g>` +
+    glyphMarkup(glyph, -13, -12, 26, v(theme, "textFaint")) +
     `<text y="36" text-anchor="middle" fill="${v(theme, "text")}" font-size="11" font-weight="600">${esc(clip(id, 16))}</text>` +
     `</g>`
   );
@@ -96,7 +95,7 @@ export function renderMorphHtml(views: MorphView[], opts: MorphOptions = {}): st
   }
 
   const badges = Object.keys(meta)
-    .map((id) => badge(id, resolveGlyph({ lexicon: meta[id].lexicon, kind: meta[id].kind }).body, theme))
+    .map((id) => badge(id, resolveGlyph({ lexicon: meta[id].lexicon, kind: meta[id].kind }), theme))
     .join("");
 
   const themeOptions = Object.keys(THEMES)

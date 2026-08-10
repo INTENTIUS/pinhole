@@ -1,5 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { renderSvg, cardFootprint, cardSizes } from "./render.ts";
+import { registerPack, clearPacks, GENERIC_GLYPHS, awsIconPack } from "../icons.ts";
+import { getTheme, v } from "../theme.ts";
 import type { GraphIR, Layout } from "../ir.ts";
 
 const ir: GraphIR = {
@@ -171,5 +173,71 @@ describe("runtime status (behold#144)", () => {
     expect(svg).toContain("--pin-runtimeBar");
     // The unstatused node still rides neutral — runtime is opt-in per node.
     expect(svg).toContain("--pin-neutralBar");
+  });
+});
+
+describe("a pack's own glyphs reach the paint (#95, behold#227)", () => {
+  const MARK = `<circle cx="16" cy="16" r="12" fill="#326ce5"/><path d="M16 8v16" stroke="#fff" stroke-width="3"/>`;
+  const packIr: GraphIR = {
+    nodes: [{ id: "api", kind: "K8s::Apps::Deployment", lexicon: "k8s", attrs: {} }],
+    edges: [],
+    groups: {},
+  };
+  const packLayout: Layout = { width: 200, height: 100, nodes: [{ id: "api", x: 100, y: 50 }] };
+  const faint = v(getTheme(), "textFaint");
+
+  afterEach(() => {
+    // The module registers gitlab + aws at import; restore them.
+    clearPacks();
+    registerPack({ lexicon: "gitlab", iconFor: (k) => (/job/i.test(k) ? "pipeline" : undefined) });
+    registerPack(awsIconPack);
+  });
+
+  const colorPack = (viewBox?: string) =>
+    registerPack({
+      lexicon: "k8s",
+      iconFor: (k) => (k.endsWith("Deployment") ? { body: MARK, colored: true, viewBox } : undefined),
+    });
+
+  it("paints a colored mark as authored — no theme stroke, no fill:none", () => {
+    clearPacks();
+    colorPack("0 0 32 32");
+    const svg = renderSvg(packIr, packLayout);
+    // The scaled <g> wrapping the mark carries a transform and nothing else.
+    const g = svg.match(/<g transform="[^"]*"[^>]*>(?=<circle cx="16")/)![0];
+    expect(g).toBe(`<g transform="translate(104 209) scale(0.6875)">`); // 22px into a 32 box
+    expect(g).not.toContain("stroke");
+    expect(g).not.toContain('fill="none"');
+    expect(svg).toContain(MARK); // the authored fills survive verbatim
+  });
+
+  it("still strokes a pack glyph that did not ask to be colored", () => {
+    clearPacks();
+    registerPack({ lexicon: "k8s", iconFor: () => ({ body: MARK }) });
+    const svg = renderSvg(packIr, packLayout);
+    const g = svg.match(/<g transform="[^"]*"[^>]*>(?=<circle cx="16")/)![0];
+    expect(g).toBe(
+      `<g transform="translate(104 209) scale(0.9167)" fill="none" stroke="${faint}" ` +
+        `stroke-width="2" stroke-linecap="round" stroke-linejoin="round">`,
+    );
+  });
+
+  it("a string-key pack paints exactly as it did before the widening", () => {
+    clearPacks();
+    registerPack({ lexicon: "k8s", iconFor: () => "container" });
+    const svg = renderSvg(packIr, packLayout);
+    expect(svg).toContain(GENERIC_GLYPHS.container);
+    expect(svg).toContain(
+      `<g transform="translate(104 209) scale(0.9167)" fill="none" stroke="${faint}" ` +
+        `stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${GENERIC_GLYPHS.container}</g>`,
+    );
+  });
+
+  it("carries a colored mark into the compact icon style too", () => {
+    clearPacks();
+    colorPack("0 0 32 32");
+    const svg = renderSvg(packIr, packLayout, { style: "icon" });
+    expect(svg).toContain(MARK);
+    expect(svg).not.toMatch(/<g transform="[^"]*"[^>]*fill="none"[^>]*><circle cx="16"/);
   });
 });

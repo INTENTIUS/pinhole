@@ -5,16 +5,46 @@
  *   per-node override → lexicon presentation pack (kind→category) →
  *   generic category (keyword heuristic) → default
  *
- * Glyphs are monochrome line icons (geometry only — no color), so the painter
- * strokes them with a theme token and they recolor with the theme. Brand /
- * provider-authentic icon packs are a separate, opt-in concern (different
- * package; full color; not themeable) — out of scope here.
+ * The bundled glyphs are monochrome line icons (geometry only — no color), so
+ * the painter strokes them with a theme token and they recolor with the theme.
+ *
+ * A pack is not limited to those, though (#95). `iconFor` may return its own
+ * geometry as a {@link GlyphSpec}, and mark it `colored` to have the painter
+ * emit it as authored instead of stroking it. That is how a lexicon-native or
+ * provider-authentic (brand) icon set plugs in through `registerPack`.
+ *
+ * This module has no runtime imports, which is what lets it ship as the
+ * `@intentius/pinhole/icons` subpath: a browser bundle can register a pack
+ * without dragging in chant and its node builtins. The package builds it as a
+ * split entry point sharing a chunk with the root, so both see one registry.
  */
 
-/** A resolved glyph: a name plus its SVG geometry (paths/shapes, no color). */
+/**
+ * Author-supplied glyph geometry, returned by a pack in place of a
+ * `GENERIC_GLYPHS` key.
+ */
+export interface GlyphSpec {
+  /** SVG child markup (paths / shapes / groups). No `<svg>` wrapper. */
+  body: string;
+  /**
+   * The body carries its own `fill`/`stroke`. The painter then emits it
+   * untouched — no theme stroke, no `fill="none"` — so a brand mark keeps its
+   * authored colors (and does not follow the theme). Default false: geometry
+   * only, stroked with the theme token like the bundled set.
+   */
+  colored?: boolean;
+  /** The coordinate box `body` is authored in. Default "0 0 24 24". */
+  viewBox?: string;
+}
+
+/** A resolved glyph: a name plus the SVG geometry to paint. */
 export interface Glyph {
   name: string;
   body: string;
+  /** See {@link GlyphSpec.colored}. */
+  colored?: boolean;
+  /** See {@link GlyphSpec.viewBox}. Absent = the default "0 0 24 24". */
+  viewBox?: string;
 }
 
 /**
@@ -82,8 +112,12 @@ export function categoryForKind(kind: string): string {
 /** A per-lexicon presentation pack: icon mapping and optional label fields. */
 export interface PresentationPack {
   lexicon: string;
-  /** Return a glyph/category name for a kind, or undefined to fall through. */
-  iconFor(kind: string): string | undefined;
+  /**
+   * Return a glyph for a kind, or undefined to fall through to the heuristic.
+   * A string is a {@link GENERIC_GLYPHS} key (unknown keys degrade to
+   * "generic"); a {@link GlyphSpec} is the pack's own geometry.
+   */
+  iconFor(kind: string): string | GlyphSpec | undefined;
   /** Pick label fields for a node, or undefined to fall through to the default. */
   fields?(node: { kind: string; lexicon: string; attrs: Record<string, unknown> }): import("./labels.ts").Field[] | undefined;
 }
@@ -108,14 +142,22 @@ export function clearPacks(): void {
 /**
  * Resolve a node to a glyph via the chain: override → lexicon pack → generic
  * category → default. Always returns a glyph (falls back to "generic").
+ *
+ * A string anywhere in the chain is a {@link GENERIC_GLYPHS} key and behaves as
+ * it always has, unknown keys included. A {@link GlyphSpec} passes its geometry
+ * through untouched and takes the node's kind as its name (a pack-authored mark
+ * has no key to be named by).
  */
 export function resolveGlyph(
   node: { lexicon: string; kind: string },
-  opts: { override?: string } = {},
+  opts: { override?: string | GlyphSpec } = {},
 ): Glyph {
-  const key = opts.override ?? getPack(node.lexicon)?.iconFor(node.kind) ?? categoryForKind(node.kind);
-  const body = GENERIC_GLYPHS[key];
-  return body ? { name: key, body } : { name: "generic", body: GENERIC_GLYPHS.generic };
+  const picked = opts.override ?? getPack(node.lexicon)?.iconFor(node.kind) ?? categoryForKind(node.kind);
+  if (typeof picked !== "string") {
+    return { name: node.kind, body: picked.body, colored: picked.colored, viewBox: picked.viewBox };
+  }
+  const body = GENERIC_GLYPHS[picked];
+  return body ? { name: picked, body } : { name: "generic", body: GENERIC_GLYPHS.generic };
 }
 
 // One example lexicon pack, to prove the plugin shape (#6). GitLab CI is jobs in
@@ -131,9 +173,10 @@ registerPack({
  * more reliable than the keyword heuristic and the base for architecture
  * diagrams (`chant graph --live`). Glyphs are the bundled **license-clean** line
  * set (geometry only, themed colour). Provider-*authentic* AWS Architecture Icons
- * (proprietary, coloured) are out of scope here — they'd be a separate opt-in
+ * (proprietary, coloured) stay out of this package: they'd be a separate opt-in
  * pack a project installs under Amazon's icon-set terms and registers to override
- * this one. Unknown kinds fall through to the heuristic.
+ * this one, returning `{ body, colored: true }` from its `iconFor` (#95).
+ * Unknown kinds fall through to the heuristic.
  */
 const AWS_ICONS: Record<string, string> = {
   "AWS::EC2::VPC": "network",

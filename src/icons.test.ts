@@ -87,6 +87,67 @@ describe("resolveGlyph (chain)", () => {
   });
 });
 
+describe("packs that carry their own geometry (#95)", () => {
+  const MARK = `<circle cx="16" cy="16" r="12" fill="#326ce5"/><path d="M16 8v16" stroke="#fff"/>`;
+
+  it("passes a GlyphSpec straight through, named by the kind", () => {
+    clearPacks();
+    registerPack({
+      lexicon: "k8s",
+      iconFor: (k) => (k === "Deployment" ? { body: MARK, colored: true, viewBox: "0 0 32 32" } : undefined),
+    });
+    const g = resolveGlyph({ lexicon: "k8s", kind: "Deployment" });
+    expect(g.body).toBe(MARK);
+    expect(g.colored).toBe(true);
+    expect(g.viewBox).toBe("0 0 32 32");
+    expect(g.name).toBe("Deployment"); // no GENERIC_GLYPHS key to be named by
+  });
+
+  it("a GlyphSpec may be monochrome — colored/viewBox are optional", () => {
+    clearPacks();
+    registerPack({ lexicon: "k8s", iconFor: () => ({ body: `<path d="M0 0h4"/>` }) });
+    const g = resolveGlyph({ lexicon: "k8s", kind: "Anything" });
+    expect(g.body).toBe(`<path d="M0 0h4"/>`);
+    expect(g.colored).toBeUndefined();
+    expect(g.viewBox).toBeUndefined();
+  });
+
+  it("a pack returning undefined for a kind still falls through to the heuristic", () => {
+    clearPacks();
+    registerPack({
+      lexicon: "k8s",
+      iconFor: (k) => (k === "Deployment" ? { body: MARK, colored: true } : undefined),
+    });
+    const g = resolveGlyph({ lexicon: "k8s", kind: "GcsBucket" });
+    expect(g.name).toBe("storage");
+    expect(g.body).toBe(GENERIC_GLYPHS.storage);
+    expect(g.colored).toBeUndefined();
+  });
+
+  it("string-key packs are unchanged by the widened contract", () => {
+    clearPacks();
+    registerPack({ lexicon: "gcp", iconFor: (k) => (k === "Vpc" ? "secret" : undefined) });
+    const g = resolveGlyph({ lexicon: "gcp", kind: "Vpc" });
+    expect(g).toEqual({ name: "secret", body: GENERIC_GLYPHS.secret });
+  });
+
+  it("an unknown string key from a pack still degrades to generic", () => {
+    clearPacks();
+    registerPack({ lexicon: "gcp", iconFor: () => "no-such-glyph" });
+    const g = resolveGlyph({ lexicon: "gcp", kind: "Vpc" });
+    expect(g.name).toBe("generic");
+    expect(g.body).toBe(GENERIC_GLYPHS.generic);
+  });
+
+  it("a GlyphSpec override wins over the pack", () => {
+    clearPacks();
+    registerPack({ lexicon: "gcp", iconFor: () => "secret" });
+    const g = resolveGlyph({ lexicon: "gcp", kind: "Vpc" }, { override: { body: MARK, colored: true } });
+    expect(g.body).toBe(MARK);
+    expect(g.colored).toBe(true);
+  });
+});
+
 describe("aws icon pack (#75)", () => {
   // The file's afterEach clears packs (restoring only gitlab), so re-register.
   beforeEach(() => registerPack(awsIconPack));

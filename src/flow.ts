@@ -16,7 +16,7 @@
 import type { GraphIR, IRNode } from "./ir.ts";
 import { getTheme, v, defs, type Theme } from "./theme.ts";
 import { resolveGlyph } from "./icons.ts";
-import { clip, esc } from "./paint/svg.ts";
+import { clip, esc, glyphMarkup } from "./paint/svg.ts";
 import { defaultPack, type SaliencePack } from "./pack.ts";
 import { roleForKind } from "./containment.ts";
 
@@ -116,7 +116,7 @@ export function renderFlow(ir: GraphIR, opts: FlowOptions = {}): string {
     return (
       `<g data-node-id="${esc(c.id)}">` +
       `<rect x="${p.x}" y="${p.y}" width="${CARD_W}" height="${CARD_H}" rx="12" fill="${v(theme, "neutralFill")}" stroke="${v(theme, "accentStroke")}" stroke-width="1.4"/>` +
-      `<g transform="translate(${p.x + 14} ${p.y + 14}) scale(1.1667)" fill="none" stroke="${v(theme, "textFaint")}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${glyph.body}</g>` +
+      glyphMarkup(glyph, p.x + 14, p.y + 14, 28, v(theme, "textFaint")) +
       `<text x="${p.x + 48}" y="${p.y + 30}" fill="${v(theme, "text")}" font-size="13" font-weight="700">${esc(clip(c.id, 14))}</text>` +
       `<text x="${p.x + 48}" y="${p.y + 47}" fill="${v(theme, "textFaint")}" font-size="10">${esc(clip(c.node.kind.split("::").pop() ?? "", 18))}</text>` +
       `</g>`
