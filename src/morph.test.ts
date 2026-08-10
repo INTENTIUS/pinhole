@@ -74,6 +74,38 @@ describe("renderMorphHtml", () => {
     expect(META.net.attrs.cidr).toBe("10.0.0.0/16");
   });
 
+  // Boundary boxes ride the morph (behold#230 M2b): a view's GroupBox[] embeds
+  // as screen-coordinate boxes keyed by id ?? title, and the engine FLIPs a box
+  // present in consecutive views instead of redrawing it.
+  it("embeds per-view boundary boxes, keyed for identity across views", () => {
+    const boxed: MorphView[] = views.map((view, i) => ({
+      ...view,
+      groups: [
+        { title: "legacy-tf — terraform", x: 60, y: 50, w: 120 + i * 40, h: 100 },
+        { title: "app — chant", x: 160, y: 50, w: 80, h: 100, status: "good", id: "app" },
+      ],
+    }));
+    const out = renderMorphHtml(boxed, { title: "Boxed" });
+    expect(out).toContain('id="pin-mboxes"');
+    expect(out).toContain("function applyBoxes");
+    expect(out).toContain(".pin-mbox { transition: transform");
+    const VIEWS = JSON.parse(out.match(/const VIEWS = (\[[\s\S]*?\]);\n/)![1].replace(/\\u003c/g, "<"));
+    expect(VIEWS[0].boxes).toHaveLength(2);
+    expect(VIEWS[0].boxes[0].key).toBe("legacy-tf — terraform");
+    expect(VIEWS[0].boxes[1].key).toBe("app"); // id wins over title
+    // The tinted box bakes a themed stroke; the untinted one leaves it to CSS.
+    expect(VIEWS[0].boxes[1].stroke).toContain("goodStroke");
+    expect(VIEWS[0].boxes[0].stroke).toBeUndefined();
+    // Same key across views, different geometry — that is what FLIPs.
+    expect(VIEWS[1].boxes[0].key).toBe(VIEWS[0].boxes[0].key);
+    expect(VIEWS[1].boxes[0].w).not.toBe(VIEWS[0].boxes[0].w);
+  });
+
+  it("keeps a groupless morph exactly as before (boxes default empty)", () => {
+    const VIEWS = JSON.parse(html.match(/const VIEWS = (\[[\s\S]*?\]);\n/)![1].replace(/\\u003c/g, "<"));
+    expect(VIEWS[0].boxes).toEqual([]);
+  });
+
   // #81: the same engine morphs an ordered sequence of *time* frames (not just
   // detail tiers). A node present in frames 1 and 3 but absent in 2 must keep its
   // identity — animate out and back — driven by node id.

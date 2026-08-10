@@ -13,17 +13,25 @@
 import type { GraphIR, IRNode } from "./ir.ts";
 import { getTheme, v, defs, THEMES, type Theme } from "./theme.ts";
 import { resolveGlyph, type Glyph } from "./icons.ts";
-import { clip, esc, glyphMarkup, statusGround } from "./paint/svg.ts";
+import { clip, esc, glyphMarkup, statusGround, statusTokens } from "./paint/svg.ts";
+import type { GroupBox } from "./paint/render.ts";
 
 const MARGIN = 80;
 const TITLE_BAND = 90;
 
 /** One view to morph between — a rendered IR at some detail/lens, with chant's
- * layout positions. */
+ * layout positions. `groups` (optional) are the view's boundary boxes in the
+ * same y-up, centre-based plane as the layout nodes — the same `GroupBox[]` a
+ * caller hands `renderSvg`. Boxes are keyed by `id ?? title` across views: a
+ * box present in both views glides and resizes with the cards (the carve
+ * walkthrough's card slides out of the Terraform box INTO the chant box —
+ * behold#230 M2b — and without the boxes moving there is no story), one absent
+ * from the next view fades in place. */
 export interface MorphView {
   name: string;
   ir: GraphIR;
   layout: { width: number; height: number; nodes: Array<{ id: string; x: number; y: number }> };
+  groups?: GroupBox[];
 }
 
 export interface MorphOptions {
@@ -60,6 +68,34 @@ function viewCanvas(view: MorphView): { w: number; h: number } {
   };
 }
 
+/** A view's boundary boxes in screen coordinates (top-left based, matching the
+ * runtime `<rect>`), with the stroke resolved to a themed value at build time
+ * so a tinted box works before the first live theme switch. */
+interface MorphBoxData {
+  key: string;
+  title: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  stroke?: string;
+}
+
+function placeBoxes(view: MorphView, morphW: number, morphH: number, theme: Theme): MorphBoxData[] {
+  const c = viewCanvas(view);
+  const ox = (morphW - c.w) / 2;
+  const oy = (morphH - c.h) / 2;
+  return (view.groups ?? []).map((b) => ({
+    key: b.id ?? b.title,
+    title: b.title,
+    x: Math.round(MARGIN + b.x - b.w / 2 + ox),
+    y: Math.round(MARGIN + TITLE_BAND + (view.layout.height - b.y) - b.h / 2 + oy),
+    w: Math.round(b.w),
+    h: Math.round(b.h),
+    ...(b.status && b.status !== "neutral" ? { stroke: v(theme, statusTokens(b.status).stroke) } : {}),
+  }));
+}
+
 /** A glyph badge drawn at the origin (0,0) so a transform can place/move it. */
 function badge(id: string, glyph: Glyph, theme: Theme): string {
   return (
@@ -80,11 +116,13 @@ export function renderMorphHtml(views: MorphView[], opts: MorphOptions = {}): st
   const morphW = Math.max(400, ...views.map((view) => viewCanvas(view).w));
   const morphH = Math.max(300, ...views.map((view) => viewCanvas(view).h));
 
-  // Per-view data: node positions + edges. And the union of node metadata.
+  // Per-view data: node positions + edges + boundary boxes. And the union of
+  // node metadata.
   const viewData = views.map((view) => ({
     name: view.name,
     pos: place(view, morphW, morphH),
     edges: view.ir.edges.map((e) => ({ from: e.from, to: e.to, via: e.viaAttr, toAttr: e.toAttr })),
+    boxes: placeBoxes(view, morphW, morphH, theme),
   }));
 
   const meta: Record<string, Pick<IRNode, "kind" | "lexicon" | "attrs">> = {};
@@ -118,6 +156,7 @@ export function renderMorphHtml(views: MorphView[], opts: MorphOptions = {}): st
     defs(theme) +
     `<rect width="${morphW}" height="${morphH}" fill="url(#pin-bg)"/>` +
     `<rect width="${morphW}" height="${morphH}" fill="url(#pin-dots)" opacity="0.6"/>` +
+    `<g id="pin-mboxes"></g>` +
     `<g id="pin-edges"></g>` +
     badges +
     `</svg>`;
@@ -176,6 +215,11 @@ const PAGE_CSS = `<style>
   .pin-stage svg { max-width: 100%; height: auto; display: block; }
   .pin-mnode { cursor: pointer; transition: transform .6s cubic-bezier(.4,0,.2,1), opacity .4s ease; }
   .pin-mnode.pin-instant { transition: none; }
+  .pin-mbox { transition: transform .6s cubic-bezier(.4,0,.2,1), opacity .4s ease; }
+  .pin-mbox rect { fill: var(--pin-bg1, #0F141D); fill-opacity: .6; stroke: var(--pin-neutralStroke, #252C38);
+    stroke-width: 1.2; transition: width .6s cubic-bezier(.4,0,.2,1), height .6s cubic-bezier(.4,0,.2,1); }
+  .pin-mbox text { font-size: 12px; font-weight: 700; letter-spacing: .5px; fill: var(--pin-textMuted, #7A8699); }
+  .pin-mbox.pin-instant, .pin-mbox.pin-instant rect { transition: none; }
   .pin-mnode:hover { filter: drop-shadow(0 0 6px var(--pin-accentBar, #4C8DFF)); }
   .pin-medge { stroke: var(--pin-edge, #3A434F); fill: none; stroke-width: 1.4; stroke-linecap: round;
     transition: opacity .35s ease; }
@@ -224,6 +268,43 @@ function applyTheme(name) {
 document.getElementById("pin-theme-select").addEventListener("change", (e) => applyTheme(e.target.value));
 
 // --- morph between views ---
+// Boundary boxes are created on first sight (with pin-instant, so a new box
+// appears in place instead of sliding in from the origin), then FLIP between
+// views: position via the group transform, size via the rect's geometry
+// transitions. A box absent from the target view fades where it stands, same
+// contract as the node badges.
+const boxLayer = document.getElementById("pin-mboxes");
+const boxEls = {};
+function applyBoxes(view, instant) {
+  const seen = new Set();
+  for (const b of view.boxes || []) {
+    seen.add(b.key);
+    let g = boxEls[b.key];
+    if (!g) {
+      g = document.createElementNS(SVGNS, "g");
+      g.setAttribute("class", "pin-mbox pin-instant");
+      const r = document.createElementNS(SVGNS, "rect");
+      r.setAttribute("rx", "16");
+      const t = document.createElementNS(SVGNS, "text");
+      t.setAttribute("x", "18");
+      t.setAttribute("y", "23");
+      g.appendChild(r);
+      g.appendChild(t);
+      g.style.opacity = "0";
+      boxLayer.appendChild(g);
+      boxEls[b.key] = g;
+    } else if (instant) g.classList.add("pin-instant");
+    const r = g.firstChild, t = g.lastChild;
+    g.style.transform = "translate(" + b.x + "px," + b.y + "px)";
+    r.setAttribute("width", b.w);
+    r.setAttribute("height", b.h);
+    t.textContent = b.title;
+    if (b.stroke) { r.style.stroke = b.stroke; t.style.fill = b.stroke; }
+    else { r.style.stroke = ""; t.style.fill = ""; }
+    requestAnimationFrame(() => { g.style.opacity = "1"; g.classList.remove("pin-instant"); });
+  }
+  for (const key in boxEls) if (!seen.has(key)) boxEls[key].style.opacity = "0";
+}
 function buildEdges(view) {
   edgeLayer.innerHTML = "";
   for (const e of view.edges) {
@@ -242,6 +323,7 @@ function applyView(i, instant) {
   if (!view) return;
   current = i;
   document.querySelectorAll(".pin-view").forEach((b, j) => b.setAttribute("aria-current", j === i ? "true" : "false"));
+  applyBoxes(view, instant);
   // fade the current edges out; rebuild after the nodes have moved
   edgeLayer.querySelectorAll(".pin-medge").forEach((p) => { p.style.opacity = "0"; });
   for (const id in nodeEls) {
