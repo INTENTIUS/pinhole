@@ -15,6 +15,7 @@ export {
 export {
   type Glyph,
   type GlyphSpec,
+  type IconContext,
   type PresentationPack,
   GENERIC_GLYPHS,
   categoryForKind,
@@ -24,7 +25,7 @@ export {
   clearPacks,
 } from "./icons.ts";
 export { type Field, MAX_FIELDS, defaultFields, resolveFields } from "./labels.ts";
-export { Canvas, glyphMarkup, type Status } from "./paint/svg.ts";
+export { Canvas, glyphMarkup, statusGround, type Status } from "./paint/svg.ts";
 export {
   renderSvg,
   cardSizes,

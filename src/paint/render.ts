@@ -2,7 +2,7 @@ import type { GraphIR, IRNode, Layout } from "../ir.ts";
 import { getTheme, type Theme } from "../theme.ts";
 import { resolveGlyph } from "../icons.ts";
 import { resolveFields, type Field } from "../labels.ts";
-import { Canvas, type Status } from "./svg.ts";
+import { Canvas, statusGround, type Status } from "./svg.ts";
 
 const CARD_W = 180;
 const CARD_BASE = 52; // title + sub
@@ -197,7 +197,12 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
     if (!p) continue;
     const status = statusFor(node);
     const emphasize = pulse.has(node.id);
-    const glyph = resolveGlyph({ lexicon: node.lexicon, kind: node.kind });
+    // The card/badge fill is decided here, before the glyph is resolved, so the
+    // pack is told the ground its mark will be painted on (#107).
+    const glyph = resolveGlyph(
+      { lexicon: node.lexicon, kind: node.kind },
+      { ground: statusGround(status, theme) },
+    );
 
     if (style === "icon") {
       const x = Math.round(p.cx - ICON_W / 2);

@@ -16,7 +16,7 @@
 import type { GraphIR, IRNode } from "./ir.ts";
 import { getTheme, v, defs, type Theme } from "./theme.ts";
 import { resolveGlyph } from "./icons.ts";
-import { clip, esc, glyphMarkup } from "./paint/svg.ts";
+import { clip, esc, glyphMarkup, statusGround } from "./paint/svg.ts";
 import { defaultPack, type SaliencePack } from "./pack.ts";
 import { roleForKind } from "./containment.ts";
 
@@ -112,7 +112,10 @@ export function renderFlow(ir: GraphIR, opts: FlowOptions = {}): string {
 
   const card = (c: Card): string => {
     const p = pos[c.id];
-    const glyph = resolveGlyph({ lexicon: c.node.lexicon, kind: c.node.kind });
+    const glyph = resolveGlyph(
+      { lexicon: c.node.lexicon, kind: c.node.kind },
+      { ground: statusGround("neutral", theme) },
+    );
     return (
       `<g data-node-id="${esc(c.id)}">` +
       `<rect x="${p.x}" y="${p.y}" width="${CARD_W}" height="${CARD_H}" rx="12" fill="${v(theme, "neutralFill")}" stroke="${v(theme, "accentStroke")}" stroke-width="1.4"/>` +

@@ -11,7 +11,7 @@
 import type { GraphIR } from "./ir.ts";
 import { getTheme, v, defs, THEMES, type Theme } from "./theme.ts";
 import { resolveGlyph } from "./icons.ts";
-import { clip, esc, glyphMarkup } from "./paint/svg.ts";
+import { clip, esc, glyphMarkup, statusGround } from "./paint/svg.ts";
 
 export interface SmallMultPanel { env: string; composites: GraphIR }
 export interface SmallMultOptions { title?: string; theme?: Theme }
@@ -50,7 +50,9 @@ export function smallMultiplesSvg(panels: SmallMultPanel[], theme: Theme, title:
             return `<rect x="${x}" y="${y}" width="${ENV_W - 30}" height="${ROW_H}" rx="10" fill="none" stroke="${v(theme, "neutralStroke")}" stroke-width="1.2" stroke-dasharray="3 5" opacity="0.5"/>` +
               `<text x="${x + (ENV_W - 30) / 2}" y="${y + ROW_H / 2 + 4}" text-anchor="middle" fill="${v(theme, "textFaint")}" font-size="12">—</text>`;
           }
-          const glyph = resolveGlyph({ lexicon: n.lexicon, kind: n.kind });
+          // Cells are the neutral fill at full opacity whatever the drift state
+          // (drift shows in the stroke), so that is the ground packs are told (#107).
+          const glyph = resolveGlyph({ lexicon: n.lexicon, kind: n.kind }, { ground: statusGround("neutral", theme) });
           const members = (n.attrs as { members?: number } | undefined)?.members;
           return (
             `<g class="pin-cell" data-node-id="${esc(id)}">` +

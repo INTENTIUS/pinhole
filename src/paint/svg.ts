@@ -51,6 +51,19 @@ function statusTokens(s: Status): StatusTokens {
   }
 }
 
+/**
+ * The fill a card / icon badge of this status is painted with, in the emitted
+ * `var(--pin-<token>, <baked>)` form. This is the string handed to a pack as
+ * `IconContext.ground` (#107): the glyph sits on this fill, at full opacity, so
+ * a pack can trust it as the ground its mark has to read against. Exported so
+ * every painter that puts a glyph on an opaque status fill names the ground the
+ * same way — the value must stay identical to what `nodeCard` / `nodeIcon`
+ * write into the rect, which the render tests pin by comparing the two.
+ */
+export function statusGround(s: Status, theme: Theme): string {
+  return v(theme, statusTokens(s).fill);
+}
+
 /** Accumulates SVG markup in pinhole's design system, themed by `theme`. */
 export class Canvas {
   private readonly theme: Theme;

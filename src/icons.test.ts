@@ -7,6 +7,8 @@ import {
   getPack,
   clearPacks,
   awsIconPack,
+  type IconContext,
+  type PresentationPack,
 } from "./icons.ts";
 
 afterEach(() => {
@@ -145,6 +147,81 @@ describe("packs that carry their own geometry (#95)", () => {
     const g = resolveGlyph({ lexicon: "gcp", kind: "Vpc" }, { override: { body: MARK, colored: true } });
     expect(g.body).toBe(MARK);
     expect(g.colored).toBe(true);
+  });
+});
+
+describe("the ground a pack is told about (#107)", () => {
+  const PLAIN = `<path d="M0 0h4"/>`;
+  const PLATED = `<rect width="24" height="24" fill="#fff"/><path d="M0 0h4"/>`;
+
+  /** A pack that records every ctx it was handed. */
+  const spyPack = (seen: Array<IconContext | undefined>) =>
+    registerPack({
+      lexicon: "k8s",
+      iconFor: (_kind, ctx) => {
+        seen.push(ctx);
+        return { body: PLAIN, colored: true };
+      },
+    });
+
+  it("threads the caller's ground into iconFor", () => {
+    clearPacks();
+    const seen: Array<IconContext | undefined> = [];
+    spyPack(seen);
+    resolveGlyph({ lexicon: "k8s", kind: "Deployment" }, { ground: "var(--pin-warnFill, #2A1417)" });
+    expect(seen).toEqual([{ ground: "var(--pin-warnFill, #2A1417)" }]);
+  });
+
+  it("always hands the pack a ctx object, with ground undefined when the caller has none", () => {
+    clearPacks();
+    const seen: Array<IconContext | undefined> = [];
+    spyPack(seen);
+    resolveGlyph({ lexicon: "k8s", kind: "Deployment" });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toBeDefined();
+    expect(seen[0]!.ground).toBeUndefined();
+  });
+
+  it("lets a pack pick a plate per ground, and the unplated mark elsewhere", () => {
+    clearPacks();
+    registerPack({
+      lexicon: "k8s",
+      // The behold case (#246/#255): plate only where the ground is the one the
+      // mark's ink dies on, instead of baking a plate that works everywhere.
+      iconFor: (_kind, ctx) => ({ body: ctx?.ground?.includes("warnFill") ? PLATED : PLAIN, colored: true }),
+    });
+    expect(resolveGlyph({ lexicon: "k8s", kind: "D" }, { ground: "var(--pin-warnFill, #2A1417)" }).body).toBe(PLATED);
+    expect(resolveGlyph({ lexicon: "k8s", kind: "D" }, { ground: "var(--pin-goodFill, #102A1E)" }).body).toBe(PLAIN);
+    expect(resolveGlyph({ lexicon: "k8s", kind: "D" }).body).toBe(PLAIN);
+  });
+
+  it("a single-argument pack is unaffected — same glyph, ground or no ground", () => {
+    clearPacks();
+    // Written exactly as packs were before #107: one parameter, no ctx. That it
+    // type-checks as a PresentationPack is half the contract.
+    const pack: PresentationPack = { lexicon: "gcp", iconFor: (kind) => (kind === "Vpc" ? "secret" : undefined) };
+    registerPack(pack);
+    const withGround = resolveGlyph({ lexicon: "gcp", kind: "Vpc" }, { ground: "var(--pin-warnFill, #2A1417)" });
+    expect(withGround).toEqual(resolveGlyph({ lexicon: "gcp", kind: "Vpc" }));
+    expect(withGround).toEqual({ name: "secret", body: GENERIC_GLYPHS.secret });
+  });
+
+  it("an override short-circuits the pack, so no ground is offered", () => {
+    clearPacks();
+    const seen: Array<IconContext | undefined> = [];
+    spyPack(seen);
+    const g = resolveGlyph(
+      { lexicon: "k8s", kind: "Deployment" },
+      { override: "secret", ground: "var(--pin-goodFill, #102A1E)" },
+    );
+    expect(g.name).toBe("secret");
+    expect(seen).toEqual([]);
+  });
+
+  it("ground does not reach the heuristic fallback", () => {
+    clearPacks();
+    const g = resolveGlyph({ lexicon: "nobody", kind: "GcsBucket" }, { ground: "var(--pin-warnFill, #2A1417)" });
+    expect(g).toEqual({ name: "storage", body: GENERIC_GLYPHS.storage });
   });
 });
 

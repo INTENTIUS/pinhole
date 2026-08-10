@@ -697,7 +697,17 @@ function badge(id: string, L: Layout, role: Role, m: { kind: string; lexicon: st
   );
 }
 
-/** Place a glyph at (gx,gy), scaled to `size`, in this module's theme. */
+/**
+ * Place a glyph at (gx,gy), scaled to `size`, in this module's theme.
+ *
+ * The `resolveGlyph` calls feeding this one pass no `ground` (#107) on purpose.
+ * Containment paints its boxes and badges through opacity — `fill-opacity` on
+ * the rect for a collapsed box or a de-emphasised leaf, group `opacity` on a
+ * dimmed plumbing badge — so the glyph reads against that fill composited over
+ * the page background, at a contrast the fill alone doesn't state. Packs see
+ * `undefined` and fall back to whatever ground-independent choice they made
+ * before #107.
+ */
 function glyphAt(glyph: Glyph | string, gx: number, gy: number, size: number, theme: Theme): string {
   return glyphMarkup(glyph, gx, gy, size, v(theme, "textFaint"));
 }

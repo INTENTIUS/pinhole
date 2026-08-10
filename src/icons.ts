@@ -13,6 +13,12 @@
  * emit it as authored instead of stroking it. That is how a lexicon-native or
  * provider-authentic (brand) icon set plugs in through `registerPack`.
  *
+ * A `colored` mark is spliced onto a card whose fill pinhole chose, so pinhole
+ * owes the pack that choice (#107): `iconFor` takes an {@link IconContext}
+ * whose `ground` is the fill the painter is about to lay under the glyph. A
+ * brand pack can then vary the mark — or plate it — per actual ground instead
+ * of picking one that survives every ground.
+ *
  * This module has no runtime imports, which is what lets it ship as the
  * `@intentius/pinhole/icons` subpath: a browser bundle can register a pack
  * without dragging in chant and its node builtins. The package builds it as a
@@ -109,6 +115,37 @@ export function categoryForKind(kind: string): string {
   return "generic";
 }
 
+/**
+ * What the painter can tell a pack about the node it is about to paint (#107).
+ * Passed as `iconFor`'s optional second argument, so a pack that ignores it —
+ * every pack written before #107 — resolves exactly as it did.
+ */
+export interface IconContext {
+  /**
+   * The `fill` the painter emits on the shape directly under the glyph: the
+   * card rect, the icon badge, a small-multiples cell. It is the literal
+   * attribute value, in pinhole's `var(--pin-<token>, <baked>)` form (theme.ts
+   * `v()`) — e.g. `var(--pin-warnFill, #2A1417)` for a `_status: "warn"` card
+   * in the dark theme. Both halves are load-bearing: the token name says which
+   * ground pinhole chose (i.e. the status), the baked hex is what that ground
+   * actually looks like in the theme being rendered, which is what a pack needs
+   * for contrast math. Match the token name to branch on status; parse the hex
+   * to measure against a mark's own ink.
+   *
+   * Caveat, the same one theming carries everywhere in pinhole: a browser that
+   * overrides `--pin-*` live repaints the ground after the fact, so the hex is
+   * true for the theme this render was asked for, not forever. It is the only
+   * colour pinhole can honestly state at resolve time.
+   *
+   * Undefined when the painter has no single truthful answer. The containment
+   * views paint their boxes and badges at `fill-opacity` below 1, so the glyph
+   * really sits on that fill composited over the page background — pinhole
+   * would be guessing. A pack seeing `undefined` is exactly where it was before
+   * #107 and should fall back to a ground-independent choice.
+   */
+  ground?: string;
+}
+
 /** A per-lexicon presentation pack: icon mapping and optional label fields. */
 export interface PresentationPack {
   lexicon: string;
@@ -116,8 +153,14 @@ export interface PresentationPack {
    * Return a glyph for a kind, or undefined to fall through to the heuristic.
    * A string is a {@link GENERIC_GLYPHS} key (unknown keys degrade to
    * "generic"); a {@link GlyphSpec} is the pack's own geometry.
+   *
+   * `ctx` (#107) carries what the painter knows about this node's ground, so a
+   * pack shipping brand artwork can pick a per-ground variant — or a plate only
+   * where the ground needs one — instead of baking one that works everywhere.
+   * It is always supplied by `resolveGlyph`, though its fields may be
+   * undefined; the parameter is optional so single-argument packs stay valid.
    */
-  iconFor(kind: string): string | GlyphSpec | undefined;
+  iconFor(kind: string, ctx?: IconContext): string | GlyphSpec | undefined;
   /** Pick label fields for a node, or undefined to fall through to the default. */
   fields?(node: { kind: string; lexicon: string; attrs: Record<string, unknown> }): import("./labels.ts").Field[] | undefined;
 }
@@ -147,12 +190,17 @@ export function clearPacks(): void {
  * it always has, unknown keys included. A {@link GlyphSpec} passes its geometry
  * through untouched and takes the node's kind as its name (a pack-authored mark
  * has no key to be named by).
+ *
+ * `opts.ground` is the painter's answer to "what am I painting this glyph on"
+ * (#107); it reaches the pack as {@link IconContext.ground}. An override still
+ * short-circuits the pack, so a caller that overrode the icon never consults it.
  */
 export function resolveGlyph(
   node: { lexicon: string; kind: string },
-  opts: { override?: string | GlyphSpec } = {},
+  opts: { override?: string | GlyphSpec; ground?: string } = {},
 ): Glyph {
-  const picked = opts.override ?? getPack(node.lexicon)?.iconFor(node.kind) ?? categoryForKind(node.kind);
+  const ctx: IconContext = { ground: opts.ground };
+  const picked = opts.override ?? getPack(node.lexicon)?.iconFor(node.kind, ctx) ?? categoryForKind(node.kind);
   if (typeof picked !== "string") {
     return { name: node.kind, body: picked.body, colored: picked.colored, viewBox: picked.viewBox };
   }
