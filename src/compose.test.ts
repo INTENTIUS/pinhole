@@ -38,6 +38,44 @@ describe("composeStacks", () => {
   });
 });
 
+describe("composeStacks — runtimeOwner namespacing (#100)", () => {
+  it("namespaces runtimeOwner when it names a node of the stack being prefixed", () => {
+    const ir: GraphIR = {
+      nodes: [
+        { id: "appA", kind: "K8s::Apps::Deployment", lexicon: "k8s", attrs: {} },
+        { id: "appA-pod-1", kind: "K8s::Core::Pod", lexicon: "k8s", attrs: {}, runtimeOwner: "appA" },
+      ],
+      edges: [],
+      groups: {},
+    };
+    const merged = composeStacks([{ name: "control-plane", ir }]);
+    const pod = merged.nodes.find((n) => n.id === "control-plane/appA-pod-1")!;
+    expect(pod.runtimeOwner).toBe("control-plane/appA");
+  });
+
+  it("leaves a cross-stack runtimeOwner untouched — it doesn't name a node of this stack", () => {
+    const ir: GraphIR = {
+      nodes: [{ id: "appA-pod-1", kind: "K8s::Core::Pod", lexicon: "k8s", attrs: {}, runtimeOwner: "argoApp" }],
+      edges: [],
+      groups: {},
+    };
+    const merged = composeStacks([{ name: "control-plane", ir }]);
+    const pod = merged.nodes.find((n) => n.id === "control-plane/appA-pod-1")!;
+    expect(pod.runtimeOwner).toBe("argoApp");
+  });
+
+  it("leaves a node with no runtimeOwner untouched", () => {
+    const ir: GraphIR = {
+      nodes: [{ id: "vpc", kind: "AWS::EC2::VPC", lexicon: "aws", attrs: {} }],
+      edges: [],
+      groups: {},
+    };
+    const merged = composeStacks([{ name: "infra", ir }]);
+    const vpc = merged.nodes.find((n) => n.id === "infra/vpc")!;
+    expect(vpc.runtimeOwner).toBeUndefined();
+  });
+});
+
 describe("composeStacks — cross-stack edges (#513)", () => {
   const infra = {
     nodes: [{ id: "cluster", kind: "AWS::ECS::Cluster", lexicon: "aws", attrs: {} }],
