@@ -81,6 +81,26 @@ describe("concept layout", () => {
     expect(layoutIr(ir).groups).toHaveLength(0);
   });
 
+  // #111 — the follow-through on #104: layoutIr's boxes carry their group key
+  // as `id` (whatever the caller grouped by — a byWave label, a byStack name, a
+  // byContainer node id), so the rendered rect gets `data-group-id` on every
+  // layout, not just architecture, and downstream needs no structural matcher.
+  it("stamps layoutIr's boxes with their group key as data-group-id (#111)", () => {
+    const groups = { "wave 1": ["The Lifecycle You Choose"], "wave 2": ["Agent / CI / Operator"] };
+    const layout = layoutIr(ir, { groups });
+    expect(layout.groups.map((g) => g.id).sort()).toEqual(["wave 1", "wave 2"]);
+    const svg = renderSvg(ir, layout, { hideTitle: true, groups: layout.groups });
+    expect(svg).toContain('data-group-id="wave 1"');
+    expect(svg).toContain('data-group-id="wave 2"');
+  });
+
+  it("layoutIr's group id is entity-escaped like #103's", () => {
+    const groups = { '<a "b">&c': ["The Lifecycle You Choose"] };
+    const layout = layoutIr(ir, { groups });
+    const svg = renderSvg(ir, layout, { hideTitle: true, groups: layout.groups });
+    expect(svg).toContain('data-group-id="&lt;a &quot;b&quot;&gt;&amp;c"');
+  });
+
   it("draws visible edge labels from viaAttr", () => {
     const labelled: GraphIR = {
       nodes: [
@@ -92,6 +112,27 @@ describe("concept layout", () => {
     };
     const svg = renderSvg(labelled, layoutIr(labelled), { hideTitle: true });
     expect(svg).toContain("yes — keep it");
+  });
+
+  // #110 — the chip is not an anonymous sibling: it carries its edge's own
+  // data-edge-* hooks, so downstream (behold's hand-layout) pairs chip and line
+  // by identity instead of document order + text sniffing.
+  it("stamps the viaAttr chip with its edge's identity (#110)", () => {
+    const labelled: GraphIR = {
+      nodes: [
+        { id: "subnet", kind: "", lexicon: "", attrs: {} },
+        { id: "vpc", kind: "", lexicon: "", attrs: {} },
+      ],
+      edges: [{ from: "subnet", to: "vpc", kind: "ref", viaAttr: "VpcId" }],
+      groups: {},
+    };
+    const svg = renderSvg(labelled, layoutIr(labelled), { hideTitle: true });
+    // Two stamped groups: the edge line and its chip, both addressable by the
+    // same (from, to) pair.
+    const stamped = svg.match(/data-edge-from="subnet" data-edge-to="vpc" data-edge-via="VpcId"/g) ?? [];
+    expect(stamped).toHaveLength(2);
+    // The chip group specifically: the stamp sits on the <g> that holds the rx-9 rect.
+    expect(svg).toMatch(/<g data-edge-from="subnet" data-edge-to="vpc" data-edge-via="VpcId"><rect [^>]*rx="9"/);
   });
 
   it("renders a dashed edge when the edge carries style: dashed", () => {

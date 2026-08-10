@@ -188,8 +188,9 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
       dashed,
     );
     // Draw the relation/branch label on the edge (concept diagrams). Placed at the
-    // path midpoint as a chip that cuts across the line.
-    if (e.viaAttr) c.edgeLabel((a.cx + b.cx) / 2, (a.cy + b.cy) / 2, e.viaAttr);
+    // path midpoint as a chip that cuts across the line, stamped with its edge's
+    // identity (#110) so it is not an anonymous sibling.
+    if (e.viaAttr) c.edgeLabel((a.cx + b.cx) / 2, (a.cy + b.cy) / 2, e.viaAttr, { from: e.from, to: e.to, via: e.viaAttr });
   }
 
   for (const node of ir.nodes) {
