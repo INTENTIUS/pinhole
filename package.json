@@ -38,7 +38,7 @@
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
-    "@intentius/chant": "^0.13.0"
+    "@intentius/chant": "^0.44.3"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

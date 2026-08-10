@@ -14,7 +14,7 @@ import { layoutIr, layoutArchitecture } from "./concept.ts";
 import { renderStacked } from "./stacked.ts";
 import { renderSmallMultiples, smallMultiplesSvg } from "./smallmult.ts";
 import { composeStacks, shortStackNames } from "./compose.ts";
-import type { GraphIR } from "./ir.ts";
+import { withResourceAttrs, type GraphIR } from "./ir.ts";
 import { summarizeIr, describeText } from "./inspect.ts";
 import { GUIDE } from "./guide.ts";
 
@@ -373,9 +373,8 @@ async function runRender(args: string[]): Promise<number> {
       const hideTitle = noTitle || (!title && !subtitle);
       // A provisioned IR (chant#779) nests resources under containers via
       // `groups.byContainer` → an architecture diagram (VPC ⊃ subnet ⊃ resource
-      // boxes). Otherwise flat titled groups from `groups.byStack`. (byContainer
-      // is read defensively — the installed chant types may lag the field.)
-      const byContainer = (ir.groups as { byContainer?: Record<string, string[]> } | undefined)?.byContainer;
+      // boxes). Otherwise flat titled groups from `groups.byStack`.
+      const byContainer = ir.groups?.byContainer;
       const layout =
         byContainer && Object.keys(byContainer).length > 0
           ? layoutArchitecture(ir, byContainer, { style, rankdir, overrides, fit: true })
@@ -400,7 +399,21 @@ async function runRender(args: string[]): Promise<number> {
     // Env-drift diff: name it "<project> · <base> → <target>" so the header reads
     // as the drift it shows.
     if (!title && driftBase) title = `${basename(resolve(dir))} · ${driftBase} → ${opts.env}`;
-    const ir = await graphIr(dir, opts);
+    const detail = opts.detail ?? 1;
+    // The tier below this one, when something needs it. chant 0.44 (chant#1489)
+    // prunes the attribute payload down the detail dial, not just the graph's
+    // shape: a T1 node carries overlay paint and composite membership and no
+    // properties at all. pinhole's default altitude *is* T1 and its cards print
+    // a couple of fields from attrs, so the resource tier has to be fetched and
+    // merged back on or every default card renders bare. The html tier-zoom
+    // below drills into that same next tier — fetch it once, for both.
+    const deepEnough = detail < 3;
+    const wantsNextTier = detail === 1 || (!!html && deepEnough);
+    const [base, nextTier] = await Promise.all([
+      graphIr(dir, opts),
+      wantsNextTier ? graphIr(dir, { ...opts, detail: detail + 1 }) : undefined,
+    ]);
+    const ir = detail === 1 && nextTier ? withResourceAttrs(base, nextTier) : base;
     // Otherwise measure each node's card, lay out with those sizes, and paint.
     const svg = renderSvg(ir, await graphLayout(dir, opts, cardSizes(ir, { style })), {
       title,
@@ -413,9 +426,8 @@ async function runRender(args: string[]): Promise<number> {
       // The interactive artifact is a tier-zoom: composites at this altitude,
       // drilling into the next detail tier's resources in place. (At the deepest
       // tier there's nothing to drill into — fall back to the flat card artifact.)
-      const deepEnough = (opts.detail ?? 1) < 3;
-      if (deepEnough) {
-        const members = await graphIr(dir, { ...opts, detail: (opts.detail ?? 1) + 1 });
+      if (deepEnough && nextTier) {
+        const members = nextTier; // the tier the zoom drills into
         // The "before" side of a diff: another project dir (`--diff <dir>`), or
         // the *same* project under a different environment (`--drift base:target`
         // → before = this dir at `base`, after = this dir at `target`).
@@ -425,7 +437,10 @@ async function runRender(args: string[]): Promise<number> {
           // (added/changed/removed/unchanged), member changes rolled up to their
           // composite. Render the *union* so removed nodes still show.
           const bOpts = { ...opts, env: before.env };
-          const [bComp, bMem] = await Promise.all([graphIr(before.dir, bOpts), graphIr(before.dir, { ...bOpts, detail: (opts.detail ?? 1) + 1 })]);
+          const [bBase, bMem] = await Promise.all([graphIr(before.dir, bOpts), graphIr(before.dir, { ...bOpts, detail: detail + 1 })]);
+          // Both sides go through the same attr merge, or the diff reads every
+          // node as "changed" for the fields only the after side got back.
+          const bComp = detail === 1 ? withResourceAttrs(bBase, bMem) : bBase;
           const d = diffTiers(bComp, ir, bMem, members);
           const uComp = unionGraph(bComp, ir), uMem = unionGraph(bMem, members);
           for (const node of [...uComp.nodes, ...uMem.nodes]) {

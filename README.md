@@ -26,19 +26,27 @@ chant source (.ts) ──build/lint──▶ graph IR ──pinhole──▶ dia
 
 - **Mermaid** — the zero-install default. Renders in GitHub, browsers, and docs
   with no native dependency. Lower fidelity. (Emitted by chant; see #496.)
-- **Graphviz** — the upgrade for people who want more. Needs `dot`
-  (`brew install graphviz`). Powers pinhole's custom SVG painter, which uses
-  Graphviz for layout only and draws its own visuals (the rackattack pattern).
-
-A future pure-JS layout engine (elkjs / dagre) will let the custom painter run
-without `dot`, erasing the install gap.
+- **The custom SVG painter** — pinhole's own, and the higher-fidelity path.
+  Layout comes from dagre (pure JS — chant's `--format layout` defaults to it,
+  and the `layoutIr` / `layoutArchitecture` library path runs it in-process);
+  pinhole draws the visuals itself. No `dot`, no native dependency.
 
 ## Status
 
-Wired to chant 0.10.0. pinhole shells `chant graph` for the graph IR
-(`--format ir`) and node positions (`--format layout`) and paints them with the
-custom SVG painter. The IR types are imported from `@intentius/chant`. Still to
-come: the theme system (chant#498) and the natural-language agent loop.
+Wired to chant 0.44; `@intentius/chant` `^0.44.3` is the supported floor. pinhole
+shells `chant graph` for the graph IR (`--format ir`) and node positions
+(`--format layout`) and paints them with the custom SVG painter; the IR types are
+imported from `@intentius/chant`.
+
+chant 0.44 moved the detail dial (chant#1489): a tier now prunes each node's
+attributes as well as the graph's shape, so a composite-tier (T1) node carries
+only overlay paint and composite membership. pinhole's default altitude *is* T1
+and its cards print a couple of fields from `attrs`, so `render` also reads the
+resource tier and merges those attributes back onto the nodes T1 left standing —
+`withResourceAttrs`, exported for consumers laying out an IR themselves.
+
+The theme system is in (see `--theme` below). Still to come: the
+natural-language agent loop.
 
 ## Usage
 
@@ -103,7 +111,6 @@ guarded by `prefers-reduced-motion`, so it animates in a browser and shows a
 still frame in static exports / on GitHub.
 
 Because pinhole renders chant's lint-gated IR, the picture is always valid infra.
-Graphviz (`dot`) must be installed for the layout step.
 
 ## Develop
 
