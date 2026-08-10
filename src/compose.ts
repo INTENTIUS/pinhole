@@ -74,10 +74,19 @@ export function composeStacks(stacks: Array<{ name: string; ir: GraphIR }>): Gra
 
   for (const { name, ir } of stacks) {
     const ns = (id: string): string => `${name}${SEP}${id}`;
+    // Pre-composition ids of this stack's own nodes — the membership test for
+    // `runtimeOwner` below (chant#1180's field postdates composeStacks, so it
+    // isn't namespaced by the id/compositeInstance rewrite above). Only rewrite
+    // an owner that names one of THIS stack's nodes; chant resolves the owner
+    // chain within a project, so a name that isn't a member here is a cross-stack
+    // (or already-composed) reference better left untouched than rewritten into
+    // a different lie (behold's `namespaceRuntimeOwners`, src/estate.ts, #241).
+    const own = new Set(ir.nodes.map((n) => n.id));
     for (const n of ir.nodes) {
       const id = ns(n.id);
       const node: IRNode = { ...n, id, attrs: remapRefs(n.attrs, name) as Record<string, unknown> };
       if (n.compositeInstance) node.compositeInstance = ns(n.compositeInstance);
+      if (n.runtimeOwner && own.has(n.runtimeOwner)) node.runtimeOwner = ns(n.runtimeOwner);
       nodes.push(node);
       (byStack[name] ??= []).push(id);
       (byLexicon[n.lexicon] ??= []).push(id);
