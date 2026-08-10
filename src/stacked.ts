@@ -11,7 +11,7 @@
 import type { GraphIR } from "./ir.ts";
 import { getTheme, v, defs, type Theme } from "./theme.ts";
 import { resolveGlyph } from "./icons.ts";
-import { clip, esc } from "./paint/svg.ts";
+import { clip, esc, glyphMarkup } from "./paint/svg.ts";
 import type { DiffStatus } from "./diff.ts";
 
 export interface StackedPlane { env: string; composites: GraphIR }
@@ -58,7 +58,7 @@ export function renderStacked(base: StackedPlane, target: StackedPlane, status: 
       `<g data-node-id="${esc(id)}" data-diff="${st ?? "same"}">` +
       `<rect x="${x}" y="${y}" width="${CARD_W}" height="${CARD_H}" rx="11" fill="${v(theme, "neutralFill")}" stroke="${t.stroke}" stroke-width="1.5"${dashed}/>` +
       `<rect x="${x}" y="${y}" width="${CARD_W}" height="4" rx="2" fill="${t.bar}"/>` +
-      `<g transform="translate(${x + 12} ${y + 14}) scale(1.0833)" fill="none" stroke="${v(theme, "textFaint")}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${glyph.body}</g>` +
+      glyphMarkup(glyph, x + 12, y + 14, 26, v(theme, "textFaint")) +
       `<text x="${x + 44}" y="${y + 27}" fill="${t.label}" font-size="13" font-weight="700">${esc(clip(id, 13))}</text>` +
       (members != null ? `<text x="${x + 44}" y="${y + 44}" fill="${v(theme, "textFaint")}" font-size="10">${members} resources</text>` : "") +
       `</g>`

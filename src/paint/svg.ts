@@ -10,6 +10,7 @@
  */
 import { type Theme, type ThemeTokenName, v, defs } from "../theme.ts";
 import type { Field } from "../labels.ts";
+import type { Glyph } from "../icons.ts";
 
 /** Drives the color of a node card. */
 export type Status = "neutral" | "accent" | "good" | "warn" | "runtime" | "selected";
@@ -109,7 +110,7 @@ export class Canvas {
     s: Status,
     title: string,
     sub: string,
-    icon?: string,
+    icon?: string | Glyph,
     fields: Field[] = [],
     emphasize = false,
     nodeId?: string,
@@ -194,7 +195,7 @@ export class Canvas {
     h: number,
     s: Status,
     label: string,
-    icon: string,
+    icon: string | Glyph,
     emphasize = false,
     nodeId?: string,
   ): void {
@@ -213,14 +214,10 @@ export class Canvas {
     this.body += `</g>`;
   }
 
-  /** Place a monochrome glyph (0 0 24 24 geometry) at (gx,gy), scaled to `size`,
-   * stroked in the theme's text color. */
-  private glyph(body: string, gx: number, gy: number, size: number): string {
-    const k = size / 24;
-    return (
-      `<g transform="translate(${gx} ${gy}) scale(${k})" fill="none" stroke="${this.c("textFaint")}" ` +
-      `stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${body}</g>`
-    );
+  /** Place a glyph at (gx,gy), scaled to `size`. Monochrome geometry is stroked
+   * in the theme's text color; a pack's `colored` mark paints as authored. */
+  private glyph(glyph: Glyph | string, gx: number, gy: number, size: number): string {
+    return glyphMarkup(glyph, gx, gy, size, this.c("textFaint"));
   }
 
   /** A bezier path between two points, in the theme's edge color. With `flow`, a
@@ -260,6 +257,52 @@ export class Canvas {
   toString(): string {
     return this.body + `</svg>`;
   }
+}
+
+const DEFAULT_VIEWBOX = "0 0 24 24";
+
+/** Round to 4dp and drop trailing zeros, so a transform reads 1.0833, not
+ * 1.0833333333333333. */
+function num(n: number): number {
+  return Math.round(n * 1e4) / 1e4;
+}
+
+/** Parse "minX minY w h", falling back to the 0 0 24 24 the bundled set uses. */
+function viewBoxOf(vb: string | undefined): [number, number, number, number] {
+  const parts = (vb ?? DEFAULT_VIEWBOX).trim().split(/[\s,]+/).map(Number);
+  if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n)) || parts[2] <= 0 || parts[3] <= 0) {
+    return [0, 0, 24, 24];
+  }
+  return [parts[0], parts[1], parts[2], parts[3]];
+}
+
+/**
+ * Place a glyph at (gx,gy), scaled to fit a `size` square. The single emitter
+ * for every glyph pinhole paints (#95) — the card icon, the icon-node badge, the
+ * containment box/leaf/origin badges, the morph badge, and the flow / stacked /
+ * small-multiples cells all come through here, so the geometry contract is
+ * honoured in one place.
+ *
+ * A monochrome glyph is stroked with `stroke` (the caller's theme token) exactly
+ * as it always has been. A `colored` glyph is emitted with no paint attributes
+ * at all, so an authored brand mark keeps its own fills and strokes. A non-24
+ * viewBox is fitted into the square, aspect preserved and centred.
+ *
+ * Accepts a bare geometry string for callers that only have a body.
+ */
+export function glyphMarkup(glyph: Glyph | string, gx: number, gy: number, size: number, stroke: string): string {
+  const g: Glyph = typeof glyph === "string" ? { name: "", body: glyph } : glyph;
+  const [minX, minY, vbW, vbH] = viewBoxOf(g.viewBox);
+  const k = size / Math.max(vbW, vbH);
+  const dx = num(gx + (size - vbW * k) / 2 - minX * k);
+  const dy = num(gy + (size - vbH * k) / 2 - minY * k);
+  const transform = `translate(${dx} ${dy}) scale(${num(k)})`;
+  // Authored colour survives only if the painter says nothing about paint.
+  if (g.colored) return `<g transform="${transform}">${g.body}</g>`;
+  return (
+    `<g transform="${transform}" fill="none" stroke="${stroke}" ` +
+    `stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${g.body}</g>`
+  );
 }
 
 /** Ellipsize to a character budget (native SVG text can't clip itself). */

@@ -16,6 +16,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./icons": {
+      "types": "./dist/icons.d.ts",
+      "default": "./dist/icons.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -26,10 +30,10 @@
     "tsc": "tsc --noEmit",
     "test": "vitest run",
     "gen:agents": "node --experimental-strip-types -e \"import('./src/guide.ts').then(m=>process.stdout.write(m.GUIDE))\" > AGENTS.md",
-    "build:lib": "esbuild src/index.ts --bundle --platform=node --format=esm --external:@intentius/chant --outfile=dist/index.js",
+    "build:lib": "esbuild src/index.ts src/icons.ts --bundle --splitting --platform=node --format=esm --external:@intentius/chant --outdir=dist",
     "build:cli": "esbuild src/cli.ts --bundle --platform=node --format=esm --external:@intentius/chant --outfile=dist/cli.js && chmod +x dist/cli.js",
     "build:types": "tsc -p tsconfig.build.json",
-    "build": "npm run build:lib && npm run build:cli && npm run build:types",
+    "build": "rm -rf dist && npm run build:lib && npm run build:cli && npm run build:types",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {

@@ -13,6 +13,7 @@ export {
 } from "./theme.ts";
 export {
   type Glyph,
+  type GlyphSpec,
   type PresentationPack,
   GENERIC_GLYPHS,
   categoryForKind,
@@ -22,7 +23,7 @@ export {
   clearPacks,
 } from "./icons.ts";
 export { type Field, MAX_FIELDS, defaultFields, resolveFields } from "./labels.ts";
-export { Canvas, type Status } from "./paint/svg.ts";
+export { Canvas, glyphMarkup, type Status } from "./paint/svg.ts";
 export {
   renderSvg,
   cardSizes,

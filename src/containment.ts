@@ -19,8 +19,8 @@
  */
 import type { GraphIR } from "./ir.ts";
 import { getTheme, v, defs, THEMES, type Theme } from "./theme.ts";
-import { resolveGlyph } from "./icons.ts";
-import { clip, esc } from "./paint/svg.ts";
+import { resolveGlyph, type Glyph } from "./icons.ts";
+import { clip, esc, glyphMarkup } from "./paint/svg.ts";
 import { defaultPack, type Role, type Focus, type SaliencePack, type Hints } from "./pack.ts";
 import { isImportSocket } from "./compose.ts";
 import type { DiffStatus } from "./diff.ts";
@@ -617,7 +617,7 @@ function box(id: string, L: Layout, role: Role, m: { kind: string; lexicon: stri
   const head =
     `<g data-node-id="${esc(id)}"${diff ? ` data-diff="${diff}"` : ""}>` +
     `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="14" fill="${v(theme, "neutralFill")}" fill-opacity="${isStack ? "0.25" : "0.5"}" stroke="${stroke}" stroke-width="1.4"${dash}/>` +
-    (isStack ? "" : glyphAt(glyph.body, x + 14, y + 8, 22, theme));
+    (isStack ? "" : glyphAt(glyph, x + 14, y + 8, 22, theme));
   // A collapsed composite renders as a card: title, `type · lexicon`, members count.
   if (card) {
     return (
@@ -691,19 +691,15 @@ function badge(id: string, L: Layout, role: Role, m: { kind: string; lexicon: st
     `<g data-node-id="${esc(id)}">` +
     `<rect x="${bx}" y="${by}" width="${badgeSize}" height="${badgeSize}" rx="13" fill="${v(theme, "neutralFill")}" fill-opacity="${fillOpacity}" stroke="${stroke}" stroke-width="${subject ? 1.8 : 1.4}"/>` +
     `<rect x="${bx}" y="${by}" width="${badgeSize}" height="4" rx="2" fill="${bar}"/>` +
-    glyphAt(glyph.body, cx - GLYPH / 2, by + (badgeSize - GLYPH) / 2 + 2, GLYPH, theme) +
+    glyphAt(glyph, cx - GLYPH / 2, by + (badgeSize - GLYPH) / 2 + 2, GLYPH, theme) +
     labelText(label, cx, by + badgeSize + 15, theme, { fontSize: 11, opacity: context ? "0.55" : "1" }) +
     `</g>`
   );
 }
 
-/** Place a 0 0 24 24 glyph at (gx,gy), scaled to `size`. */
-function glyphAt(body: string, gx: number, gy: number, size: number, theme: Theme): string {
-  const k = (size / 24).toFixed(4);
-  return (
-    `<g transform="translate(${gx} ${gy}) scale(${k})" fill="none" stroke="${v(theme, "textFaint")}" ` +
-    `stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${body}</g>`
-  );
+/** Place a glyph at (gx,gy), scaled to `size`, in this module's theme. */
+function glyphAt(glyph: Glyph | string, gx: number, gy: number, size: number, theme: Theme): string {
+  return glyphMarkup(glyph, gx, gy, size, v(theme, "textFaint"));
 }
 
 // ---------------------------------------------------------------------------
@@ -715,7 +711,6 @@ function glyphAt(body: string, gx: number, gy: number, size: number, theme: Them
 
 /** A leaf badge drawn at the origin (0,0), so a transform can place/move it. */
 function originBadge(id: string, role: Role, m: { kind: string; lexicon: string }, theme: Theme, focus: Focus = "app", diff?: string, label = id): string {
-  const k = (GLYPH / 24).toFixed(4);
   const { context, subject } = emphasis(role, focus);
   const dim = role === "plumbing" || context ? ` opacity="0.5"` : "";
   const stroke = subject ? v(theme, "accentStroke") : v(theme, "neutralStroke");
@@ -724,7 +719,7 @@ function originBadge(id: string, role: Role, m: { kind: string; lexicon: string 
     `<g class="pin-cnode" data-node-id="${esc(id)}"${diff ? ` data-diff="${diff}"` : ""} transform="translate(0,0)" style="opacity:0"${dim}>` +
     `<rect x="-24" y="-24" width="48" height="48" rx="13" fill="${v(theme, "neutralFill")}" stroke="${stroke}" stroke-width="${subject ? 1.8 : 1.4}"/>` +
     `<rect x="-24" y="-24" width="48" height="4" rx="2" fill="${bar}"/>` +
-    `<g transform="translate(${-GLYPH / 2} ${-GLYPH / 2 + 2}) scale(${k})" fill="none" stroke="${v(theme, "textFaint")}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${resolveGlyph({ lexicon: m.lexicon, kind: m.kind }).body}</g>` +
+    glyphAt(resolveGlyph({ lexicon: m.lexicon, kind: m.kind }), -GLYPH / 2, -GLYPH / 2 + 2, GLYPH, theme) +
     labelText(label, 0, 34, theme, { cls: "pin-clabel", fontSize: 10 }) +
     `</g>`
   );

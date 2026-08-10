@@ -188,7 +188,7 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
     if (style === "icon") {
       const x = Math.round(p.cx - ICON_W / 2);
       const y = Math.round(p.cy - ICON_H / 2);
-      c.nodeIcon(x, y, ICON_W, ICON_H, status, node.id, glyph.body, emphasize, node.id);
+      c.nodeIcon(x, y, ICON_W, ICON_H, status, node.id, glyph, emphasize, node.id);
       continue;
     }
 
@@ -203,7 +203,7 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
     if (tier === "rich") {
       c.nodeCardRich(x, y, cardW, h, status, node.id, sub, fields, emphasize, node.id);
     } else {
-      c.nodeCard(x, y, cardW, h, status, node.id, sub, glyph.body, fields, emphasize, node.id);
+      c.nodeCard(x, y, cardW, h, status, node.id, sub, glyph, fields, emphasize, node.id);
     }
   }
 

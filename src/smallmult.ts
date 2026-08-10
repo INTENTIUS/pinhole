@@ -11,7 +11,7 @@
 import type { GraphIR } from "./ir.ts";
 import { getTheme, v, defs, THEMES, type Theme } from "./theme.ts";
 import { resolveGlyph } from "./icons.ts";
-import { clip, esc } from "./paint/svg.ts";
+import { clip, esc, glyphMarkup } from "./paint/svg.ts";
 
 export interface SmallMultPanel { env: string; composites: GraphIR }
 export interface SmallMultOptions { title?: string; theme?: Theme }
@@ -55,7 +55,7 @@ export function smallMultiplesSvg(panels: SmallMultPanel[], theme: Theme, title:
           return (
             `<g class="pin-cell" data-node-id="${esc(id)}">` +
             `<rect x="${x}" y="${y}" width="${ENV_W - 30}" height="${ROW_H}" rx="10" fill="${v(theme, "neutralFill")}" stroke="${drift ? v(theme, "warnStroke") : v(theme, "accentStroke")}" stroke-width="1.4"/>` +
-            `<g transform="translate(${x + 12} ${y + 13}) scale(1.0833)" fill="none" stroke="${v(theme, "textFaint")}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${glyph.body}</g>` +
+            glyphMarkup(glyph, x + 12, y + 13, 26, v(theme, "textFaint")) +
             `<text x="${x + 42}" y="${y + 26}" fill="${v(theme, "text")}" font-size="13" font-weight="700">${esc(clip(id, 11))}</text>` +
             (members != null ? `<text x="${x + 42}" y="${y + 43}" fill="${v(theme, "textFaint")}" font-size="10">${members} resources</text>` : "") +
             `</g>`

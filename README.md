@@ -63,7 +63,33 @@ browser flip `--pin-*` variables live when the SVG is inlined.
 Nodes get a type icon, resolved through a chain: per-node override → lexicon
 presentation pack → generic category (inferred from the resource kind) →
 default. The built-in glyphs are monochrome line icons that recolor with the
-theme. Provider-authentic (brand) icon packs are a separate, opt-in concern.
+theme.
+
+A pack registered with `registerPack` is not limited to those. Its `iconFor` may
+return a key into the built-in set (a string, as before) or its own geometry:
+
+```ts
+import { registerPack } from "@intentius/pinhole/icons";
+
+registerPack({
+  lexicon: "k8s",
+  iconFor: (kind) =>
+    kind.endsWith("Deployment")
+      ? { body: `<circle cx="16" cy="16" r="12" fill="#326ce5"/>`, colored: true, viewBox: "0 0 32 32" }
+      : undefined,
+});
+```
+
+`colored: true` tells the painter to emit the mark as authored — no theme
+stroke, no `fill="none"` — which is how a lexicon-native or provider-authentic
+(brand) icon set plugs in. Without it the geometry is stroked with the theme
+token like the bundled glyphs. `viewBox` defaults to `0 0 24 24`; any other box
+is fitted to the icon slot, aspect preserved.
+
+The `@intentius/pinhole/icons` subpath is the icon module on its own — no chant,
+no node builtins — so a browser bundle can register a pack without pulling the
+CLI's dependencies. It shares a module instance with the package root, so a pack
+registered through it is the pack `renderSvg` paints with.
 
 Node bodies show a few fields from the IR attrs (chosen by a template: per-node
 override → lexicon pack → default scalar attrs). The default **portable** output
