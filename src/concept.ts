@@ -88,9 +88,13 @@ export function layoutIr(ir: GraphIR, opts: ConceptLayoutOptions = {}): ConceptL
     });
 
   const groups: GroupBox[] = groupEntries
-    .map(([title]) => {
+    .map(([title]): GroupBox | undefined => {
       const b = g.node(clusterId(title)) as { x: number; y: number; width: number; height: number } | undefined;
-      return b ? { title, x: b.x, y: height - b.y, w: b.width, h: b.height } : undefined;
+      // `id` is the group record's key (byWave/byStack/byContainer — whatever
+      // the caller grouped by), stamped as `data-group-id` the same way
+      // `layoutArchitecture` does (#104), so downstream can address the box
+      // structurally on every layout, not just architecture (#111).
+      return b ? { title, id: title, x: b.x, y: height - b.y, w: b.width, h: b.height } : undefined;
     })
     .filter((b): b is GroupBox => b !== undefined);
 

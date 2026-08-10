@@ -266,11 +266,18 @@ export class Canvas {
   }
 
   /** A visible label on an edge (concept diagrams — branch conditions, relations).
-   * A small chip in the page-background color so it cuts cleanly across the line. */
-  edgeLabel(x: number, y: number, text: string): void {
+   * A small chip in the page-background color so it cuts cleanly across the line.
+   * With `rel`, the chip group carries the same `data-edge-*` hooks as the edge
+   * it labels (#110) — downstream re-anchoring (behold's hand-layout) pairs
+   * chip and line by identity instead of document order, which its own
+   * hover-raise re-appending destroys. */
+  edgeLabel(x: number, y: number, text: string, rel?: EdgeRel): void {
+    const relAttrs = rel
+      ? ` data-edge-from="${esc(rel.from)}" data-edge-to="${esc(rel.to)}"` + (rel.via ? ` data-edge-via="${esc(rel.via)}"` : "")
+      : "";
     const w = text.length * 5.7 + 14;
     this.body +=
-      `<g><rect x="${(x - w / 2).toFixed(1)}" y="${y - 9}" width="${w.toFixed(1)}" height="18" rx="9" ` +
+      `<g${relAttrs}><rect x="${(x - w / 2).toFixed(1)}" y="${y - 9}" width="${w.toFixed(1)}" height="18" rx="9" ` +
       `fill="${this.c("bg0")}" stroke="${this.c("neutralStroke")}" stroke-width="1"/>` +
       `<text x="${x.toFixed(1)}" y="${y + 3.5}" text-anchor="middle" fill="${this.c("textMuted")}" font-size="10.5">${esc(text)}</text></g>`;
   }
