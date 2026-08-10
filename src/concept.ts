@@ -189,6 +189,7 @@ export function layoutArchitecture(
         w: b.width,
         h: b.height,
         depth: depthOf(id),
+        id,
         ...(status && status !== "neutral" ? { status } : {}),
       };
     })

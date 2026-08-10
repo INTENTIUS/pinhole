@@ -90,10 +90,15 @@ export class Canvas {
    * cards so they sit on top. A `status` tints the border and title with the
    * card status tokens — a helm release box or a cluster boundary can then say
    * deployed/failed/pending itself, not only through the cards inside it. The
-   * fill stays the soft panel: a status-filled region would fight the cards. */
-  groupBox(x: number, y: number, w: number, h: number, title?: string, status?: Status): void {
+   * fill stays the soft panel: a status-filled region would fight the cards.
+   * `groupId` (the container key — pinhole#103) is stamped as `data-group-id`
+   * on the rect, the same hook `data-node-id` gives cards, so downstream
+   * interaction can address a box structurally instead of sniffing rx + sibling
+   * text. */
+  groupBox(x: number, y: number, w: number, h: number, title?: string, status?: Status, groupId?: string): void {
     const stroke = status && status !== "neutral" ? statusTokens(status).stroke : "neutralStroke";
-    this.body += `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="16" fill="${this.c("bg1")}" fill-opacity="0.6" stroke="${this.c(stroke)}" stroke-width="1.2"/>`;
+    const idAttr = groupId ? ` data-group-id="${esc(groupId)}"` : "";
+    this.body += `<rect${idAttr} x="${x}" y="${y}" width="${w}" height="${h}" rx="16" fill="${this.c("bg1")}" fill-opacity="0.6" stroke="${this.c(stroke)}" stroke-width="1.2"/>`;
     if (title) {
       const titleFill = status && status !== "neutral" ? this.c(stroke) : this.c("textMuted");
       this.body += `<text x="${x + 18}" y="${y + 23}" fill="${titleFill}" font-size="12" font-weight="700" letter-spacing=".5">${esc(title)}</text>`;

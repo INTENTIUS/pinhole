@@ -191,6 +191,37 @@ describe("concept layout", () => {
     expect(svg).toContain("--pin-goodStroke");
   });
 
+  it("architecture layout: a composed render stamps data-group-id with the container key (#103)", () => {
+    const arch: GraphIR = {
+      nodes: [
+        { id: "vpc", kind: "AWS::EC2::VPC", lexicon: "aws", attrs: {} },
+        { id: "subnet", kind: "AWS::EC2::Subnet", lexicon: "aws", attrs: {} },
+        { id: "instance", kind: "AWS::EC2::Instance", lexicon: "aws", attrs: {} },
+      ],
+      edges: [],
+      groups: {},
+    };
+    const byContainer = { vpc: ["subnet"], subnet: ["instance"] };
+    const layout = layoutArchitecture(arch, byContainer);
+
+    // Each box carries its own container key, not the display title.
+    expect(layout.groups.find((g) => g.title.startsWith("vpc"))!.id).toBe("vpc");
+    expect(layout.groups.find((g) => g.title.startsWith("subnet"))!.id).toBe("subnet");
+
+    const svg = renderSvg(arch, layout, { hideTitle: true, groups: layout.groups });
+    expect(svg).toContain('data-group-id="vpc"');
+    expect(svg).toContain('data-group-id="subnet"');
+  });
+
+  it("group id, like other attribute values, is entity-escaped", () => {
+    const svg = renderSvg(
+      { nodes: [], edges: [], groups: {} },
+      { nodes: [], width: 400, height: 200 },
+      { hideTitle: true, groups: [{ title: "x", x: 100, y: 100, w: 200, h: 100, id: '<a "b">&c' }] },
+    );
+    expect(svg).toContain('data-group-id="&lt;a &quot;b&quot;&gt;&amp;c"');
+  });
+
   it("layoutIr: a group whose members are absent from the graph lays out finite", () => {
     const g: GraphIR = {
       nodes: [{ id: "a", kind: "T", lexicon: "", attrs: {} }],
