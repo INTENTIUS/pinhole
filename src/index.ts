@@ -1,4 +1,5 @@
-export type { GraphIR, IRNode, IREdge, IRGroups, SourceLoc, Layout, Point } from "./ir.ts";
+export type { GraphIR, IRNode, IREdge, IRGroups, IRExport, IRImport, SourceLoc, Layout, Point } from "./ir.ts";
+export { withResourceAttrs } from "./ir.ts";
 export { graphIr, graphLayout, graphFlags, type GraphOptions } from "./chant.ts";
 export {
   type Theme,
