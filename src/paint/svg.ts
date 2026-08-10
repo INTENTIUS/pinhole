@@ -30,7 +30,10 @@ interface StatusTokens {
   bar: ThemeTokenName;
 }
 
-function statusTokens(s: Status): StatusTokens {
+/** Exported for the morph's group boxes (#110-adjacent): a box status must
+ * resolve to the same stroke token a `groupBox` would use, so a tinted box
+ * reads identically in the static SVG and the morph artifact. */
+export function statusTokens(s: Status): StatusTokens {
   switch (s) {
     case "accent":
       return { fill: "accentFill", stroke: "accentStroke", bar: "accentBar" };
