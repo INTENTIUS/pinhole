@@ -33,7 +33,7 @@ chant source (.ts) ──build/lint──▶ graph IR ──pinhole──▶ dia
 
 ## Status
 
-Wired to chant 0.44; `@intentius/chant` `^0.44.3` is the supported floor. pinhole
+Wired to chant 0.52; `@intentius/chant` `^0.52.2` is the supported floor. pinhole
 shells `chant graph` for the graph IR (`--format ir`) and node positions
 (`--format layout`) and paints them with the custom SVG painter; the IR types are
 imported from `@intentius/chant`.
