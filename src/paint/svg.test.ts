@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { glyphMarkup } from "./svg.ts";
+import { glyphMarkup, groupMarkMarkup } from "./svg.ts";
 
 const BODY = `<rect x="4" y="4" width="16" height="16" rx="3"/>`;
 const MARK = `<circle cx="16" cy="16" r="12" fill="#326ce5"/><path d="M16 8v16" stroke="#fff"/>`;
@@ -66,5 +66,29 @@ describe("glyphMarkup (#95)", () => {
     expect(at(26)).toBe("1.0833"); // morph badge, stacked, smallmult
     expect(at(24)).toBe("1"); // the identity case
     expect(at(22)).toBe("0.9167"); // containment box, card icon
+  });
+});
+
+describe("groupMarkMarkup (#119)", () => {
+  it("puts the mark in the box's top-right gutter, on the title row", () => {
+    // Box at (80,210), 200 wide: an 18px square inset 18px from the right edge
+    // (mirroring the title's 18px left inset), 9px down so it centres on the
+    // 12px title's baseline at y+23.
+    expect(groupMarkMarkup(BODY, 80, 210, 200, "#abc")).toContain(`transform="translate(244 219) scale(0.75)"`);
+  });
+
+  it("tracks the box's right edge, not its left — a wider box moves the mark", () => {
+    const at = (w: number) => groupMarkMarkup(BODY, 0, 0, w, "#abc").match(/translate\((-?[\d.]+) /)![1];
+    expect(at(200)).toBe("164");
+    expect(at(240)).toBe("204");
+    // Width 0 bakes the offset *from* the right edge, which is how the morph
+    // ships a mark for a box whose width changes between views.
+    expect(at(0)).toBe("-36");
+  });
+
+  it("leaves an authored colored mark unpainted, like every other glyph site", () => {
+    const out = groupMarkMarkup({ name: "m", body: MARK, colored: true }, 0, 0, 200, "#abc");
+    expect(out).not.toContain("#abc");
+    expect(out).toContain(MARK);
   });
 });

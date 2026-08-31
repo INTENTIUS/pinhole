@@ -13,8 +13,8 @@
 import type { GraphIR, IRNode } from "./ir.ts";
 import { getTheme, v, defs, THEMES, type Theme } from "./theme.ts";
 import { resolveGlyph, type Glyph } from "./icons.ts";
-import { clip, esc, glyphMarkup, statusGround, statusTokens } from "./paint/svg.ts";
-import type { GroupBox } from "./paint/render.ts";
+import { clip, esc, glyphMarkup, groupMarkMarkup, statusGround, statusTokens } from "./paint/svg.ts";
+import { groupMark, type GroupBox } from "./paint/render.ts";
 
 const MARGIN = 80;
 const TITLE_BAND = 90;
@@ -79,21 +79,32 @@ interface MorphBoxData {
   w: number;
   h: number;
   stroke?: string;
+  /** The box's identity mark (#119) as geometry at the local origin — the box's
+   * own width decides where it lands, and that changes per view, so the runtime
+   * translates this into the gutter rather than the build baking a position. */
+  mark?: string;
 }
 
 function placeBoxes(view: MorphView, morphW: number, morphH: number, theme: Theme): MorphBoxData[] {
   const c = viewCanvas(view);
   const ox = (morphW - c.w) / 2;
   const oy = (morphH - c.h) / 2;
-  return (view.groups ?? []).map((b) => ({
-    key: b.id ?? b.title,
-    title: b.title,
-    x: Math.round(MARGIN + b.x - b.w / 2 + ox),
-    y: Math.round(MARGIN + TITLE_BAND + (view.layout.height - b.y) - b.h / 2 + oy),
-    w: Math.round(b.w),
-    h: Math.round(b.h),
-    ...(b.status && b.status !== "neutral" ? { stroke: v(theme, statusTokens(b.status).stroke) } : {}),
-  }));
+  return (view.groups ?? []).map((b) => {
+    const glyph = groupMark(b);
+    // Stroked in the box's title colour, in `var(--pin-*, baked)` form, so the
+    // mark follows a live theme switch the way the title's CSS fill does.
+    const ink = v(theme, b.status && b.status !== "neutral" ? statusTokens(b.status).stroke : "textMuted");
+    return {
+      key: b.id ?? b.title,
+      title: b.title,
+      x: Math.round(MARGIN + b.x - b.w / 2 + ox),
+      y: Math.round(MARGIN + TITLE_BAND + (view.layout.height - b.y) - b.h / 2 + oy),
+      w: Math.round(b.w),
+      h: Math.round(b.h),
+      ...(b.status && b.status !== "neutral" ? { stroke: v(theme, statusTokens(b.status).stroke) } : {}),
+      ...(glyph ? { mark: groupMarkMarkup(glyph, 0, 0, 0, ink) } : {}),
+    };
+  });
 }
 
 /** A glyph badge drawn at the origin (0,0) so a transform can place/move it. */
@@ -216,10 +227,12 @@ const PAGE_CSS = `<style>
   .pin-mnode { cursor: pointer; transition: transform .6s cubic-bezier(.4,0,.2,1), opacity .4s ease; }
   .pin-mnode.pin-instant { transition: none; }
   .pin-mbox { transition: transform .6s cubic-bezier(.4,0,.2,1), opacity .4s ease; }
-  .pin-mbox rect { fill: var(--pin-bg1, #0F141D); fill-opacity: .6; stroke: var(--pin-neutralStroke, #252C38);
+  /* Direct children only: a box's mark (#119) may be authored artwork with rects
+     and text of its own, and the panel/title paint must not reach into it. */
+  .pin-mbox > rect { fill: var(--pin-bg1, #0F141D); fill-opacity: .6; stroke: var(--pin-neutralStroke, #252C38);
     stroke-width: 1.2; transition: width .6s cubic-bezier(.4,0,.2,1), height .6s cubic-bezier(.4,0,.2,1); }
-  .pin-mbox text { font-size: 12px; font-weight: 700; letter-spacing: .5px; fill: var(--pin-textMuted, #7A8699); }
-  .pin-mbox.pin-instant, .pin-mbox.pin-instant rect { transition: none; }
+  .pin-mbox > text { font-size: 12px; font-weight: 700; letter-spacing: .5px; fill: var(--pin-textMuted, #7A8699); }
+  .pin-mbox.pin-instant, .pin-mbox.pin-instant > rect { transition: none; }
   .pin-mnode:hover { filter: drop-shadow(0 0 6px var(--pin-accentBar, #4C8DFF)); }
   .pin-medge { stroke: var(--pin-edge, #3A434F); fill: none; stroke-width: 1.4; stroke-linecap: round;
     transition: opacity .35s ease; }
@@ -290,17 +303,25 @@ function applyBoxes(view, instant) {
       t.setAttribute("y", "23");
       g.appendChild(r);
       g.appendChild(t);
+      // Third child, always present, holds the box mark (#119) — empty for an
+      // unmarked box, so rect/text/mark keep fixed indices.
+      g.appendChild(document.createElementNS(SVGNS, "g"));
       g.style.opacity = "0";
       boxLayer.appendChild(g);
       boxEls[b.key] = g;
     } else if (instant) g.classList.add("pin-instant");
-    const r = g.firstChild, t = g.lastChild;
+    const r = g.children[0], t = g.children[1];
     g.style.transform = "translate(" + b.x + "px," + b.y + "px)";
     r.setAttribute("width", b.w);
     r.setAttribute("height", b.h);
     t.textContent = b.title;
     if (b.stroke) { r.style.stroke = b.stroke; t.style.fill = b.stroke; }
     else { r.style.stroke = ""; t.style.fill = ""; }
+    // The mark (#119) is baked relative to the box's right edge, so sliding it
+    // by the current width puts it in the gutter at whatever size this view is.
+    const m = g.children[2];
+    if (m.__mark !== (b.mark || "")) { m.innerHTML = b.mark || ""; m.__mark = b.mark || ""; }
+    m.setAttribute("transform", "translate(" + b.w + ",0)");
     requestAnimationFrame(() => { g.style.opacity = "1"; g.classList.remove("pin-instant"); });
   }
   for (const key in boxEls) if (!seen.has(key)) boxEls[key].style.opacity = "0";

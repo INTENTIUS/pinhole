@@ -25,11 +25,12 @@ export {
   clearPacks,
 } from "./icons.ts";
 export { type Field, MAX_FIELDS, defaultFields, resolveFields } from "./labels.ts";
-export { Canvas, glyphMarkup, statusGround, type Status } from "./paint/svg.ts";
+export { Canvas, glyphMarkup, groupMarkMarkup, statusGround, type Status } from "./paint/svg.ts";
 export {
   renderSvg,
   cardSizes,
   cardFootprint,
+  groupMark,
   type RenderOptions,
   type NodeOverride,
   type NodeStyle,

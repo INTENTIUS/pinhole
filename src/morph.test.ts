@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { renderMorphHtml, type MorphView } from "./morph.ts";
 import type { GraphIR } from "./ir.ts";
+import { GENERIC_GLYPHS } from "./icons.ts";
 
 // detail 1: a composite "net" + a standalone "assets"
 const collapsed: GraphIR = {
@@ -99,6 +100,55 @@ describe("renderMorphHtml", () => {
     // Same key across views, different geometry — that is what FLIPs.
     expect(VIEWS[1].boxes[0].key).toBe(VIEWS[0].boxes[0].key);
     expect(VIEWS[1].boxes[0].w).not.toBe(VIEWS[0].boxes[0].w);
+  });
+
+  // A box mark (#119) rides the morph too — the morph takes the same GroupBox[]
+  // renderSvg does, so a field it silently dropped would be a trap. The geometry
+  // is baked at the box's *right edge* (a negative local offset) because the box
+  // resizes between views; the engine slides it by the current width.
+  it("carries a box mark across the views, baked relative to the right edge", () => {
+    const marked: MorphView[] = views.map((view, i) => ({
+      ...view,
+      groups: [{ title: "argocd", id: "argocd", x: 60, y: 50, w: 120 + i * 40, h: 100, mark: "user" }],
+    }));
+    const out = renderMorphHtml(marked, { title: "Marked" });
+    const VIEWS = JSON.parse(out.match(/const VIEWS = (\[[\s\S]*?\]);\n/)![1].replace(/\\u003c/g, "<"));
+    expect(VIEWS[0].boxes[0].mark).toContain(GENERIC_GLYPHS.user);
+    expect(VIEWS[0].boxes[0].mark).toContain("translate(-36 9) scale(0.75)");
+    // Themed in var() form, so it follows a live theme switch like the title.
+    expect(VIEWS[0].boxes[0].mark).toContain("var(--pin-textMuted");
+    // Same mark in both views; only the width the engine slides it by changes.
+    expect(VIEWS[1].boxes[0].mark).toBe(VIEWS[0].boxes[0].mark);
+    expect(VIEWS[1].boxes[0].w).not.toBe(VIEWS[0].boxes[0].w);
+    expect(out).toContain('m.setAttribute("transform", "translate(" + b.w + ",0)")');
+  });
+
+  it("tints a marked box's glyph with its status, as the static painter does", () => {
+    const marked: MorphView[] = views.map((view) => ({
+      ...view,
+      groups: [{ title: "argocd", x: 60, y: 50, w: 120, h: 100, status: "good", mark: "user" }],
+    }));
+    const VIEWS = JSON.parse(
+      renderMorphHtml(marked, { title: "Marked" }).match(/const VIEWS = (\[[\s\S]*?\]);\n/)![1].replace(/\\u003c/g, "<"),
+    );
+    expect(VIEWS[0].boxes[0].mark).toContain("var(--pin-goodStroke");
+  });
+
+  it("leaves an unmarked box's data exactly as it was — no mark key at all", () => {
+    const boxed: MorphView[] = views.map((view) => ({
+      ...view,
+      groups: [{ title: "plain", x: 60, y: 50, w: 120, h: 100 }],
+    }));
+    const VIEWS = JSON.parse(
+      renderMorphHtml(boxed, { title: "Plain" }).match(/const VIEWS = (\[[\s\S]*?\]);\n/)![1].replace(/\\u003c/g, "<"),
+    );
+    expect(VIEWS[0].boxes[0]).toEqual({ key: "plain", title: "plain", x: expect.any(Number), y: expect.any(Number), w: 120, h: 100 });
+  });
+
+  it("keeps the panel paint off an authored mark's own shapes (direct-child CSS)", () => {
+    expect(html).toContain(".pin-mbox > rect {");
+    expect(html).toContain(".pin-mbox > text {");
+    expect(html).not.toMatch(/\.pin-mbox rect \{/);
   });
 
   it("keeps a groupless morph exactly as before (boxes default empty)", () => {
