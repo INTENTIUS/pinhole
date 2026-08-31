@@ -1,6 +1,6 @@
 import type { GraphIR, IRNode, Layout } from "../ir.ts";
 import { getTheme, type Theme } from "../theme.ts";
-import { resolveGlyph } from "../icons.ts";
+import { resolveGlyph, type Glyph, type GlyphSpec } from "../icons.ts";
 import { resolveFields, type Field } from "../labels.ts";
 import { Canvas, statusGround, type Status } from "./svg.ts";
 
@@ -44,6 +44,22 @@ export interface GroupBox {
    * structurally instead of sniffing rx + sibling text. Absent for concept
    * diagrams, whose groups have no container node behind them. */
   id?: string;
+  /** An identity glyph for the box, in the *node* mark vocabulary (#95): a
+   * {@link GENERIC_GLYPHS} key (unknown keys degrade to "generic") or a pack's
+   * own {@link GlyphSpec} geometry, `colored` if it carries its own paint.
+   * Painted in the box's top-right gutter, on the title row.
+   *
+   * A box could be titled but never badged (pinhole#119), which left a consumer
+   * that wants to mark one box out of many — behold marking the operator's own
+   * namespace — with only the title to smuggle it through, and titles are
+   * load-bearing (behold re-parses `namespace <ns>` to re-parent helm releases).
+   * This is that channel: the same vocabulary the cards use, so a caller with a
+   * pack already has the glyph.
+   *
+   * Monochrome geometry is stroked with the box's title colour, so it follows
+   * the theme and the status tint exactly as the title does. Absent = the box
+   * renders byte-identical to before this field existed. */
+  mark?: string | GlyphSpec;
 }
 
 interface FootprintOptions {
@@ -169,6 +185,7 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
       grp.title,
       grp.status,
       grp.id,
+      groupMark(grp),
     );
   }
 
@@ -228,6 +245,18 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
   }
 
   return c.toString();
+}
+
+/** A box's `mark` (#119) resolved to paintable geometry, or undefined when the
+ * box has none. The mark is an *override* in `resolveGlyph`'s chain, so it never
+ * consults a pack or the kind heuristic — a box has no lexicon or kind of its
+ * own — but an unknown key still degrades to "generic" exactly as it does on a
+ * card. No `ground` is offered: the box fill is painted at `fill-opacity` 0.6,
+ * so pinhole cannot honestly name what a glyph on it sits over (icons.ts,
+ * IconContext.ground). Exported for the morph, which paints the same boxes. */
+export function groupMark(grp: GroupBox): Glyph | undefined {
+  if (grp.mark === undefined) return undefined;
+  return resolveGlyph({ lexicon: "", kind: grp.id ?? grp.title }, { override: grp.mark });
 }
 
 const STATUS_VALUES = new Set<Status>(["neutral", "accent", "good", "warn", "runtime", "selected"]);

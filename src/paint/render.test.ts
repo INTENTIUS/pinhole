@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { renderSvg, cardFootprint, cardSizes } from "./render.ts";
+import { renderSvg, cardFootprint, cardSizes, type GroupBox } from "./render.ts";
 import { registerPack, clearPacks, GENERIC_GLYPHS, awsIconPack } from "../icons.ts";
 import { getTheme, v } from "../theme.ts";
 import type { GraphIR, Layout } from "../ir.ts";
@@ -239,6 +239,81 @@ describe("a pack's own glyphs reach the paint (#95, behold#227)", () => {
     const svg = renderSvg(packIr, packLayout, { style: "icon" });
     expect(svg).toContain(MARK);
     expect(svg).not.toMatch(/<g transform="[^"]*"[^>]*fill="none"[^>]*><circle cx="16"/);
+  });
+});
+
+describe("a group box can carry a mark (#119)", () => {
+  // The geometry, worked out once: MARGIN 80 + the 90px title band, a box centred
+  // at (100,100) in a 200-tall layout → rect at (80,210), 200x120. The mark is an
+  // 18px square inset 18px from the right edge (the mirror of the title's inset),
+  // sitting on the title row.
+  const box: GroupBox = { title: "ns", id: "argocd", x: 100, y: 100, w: 200, h: 120 };
+  const RECT_X = 80;
+  const RECT_Y = 210;
+  const MARK_X = RECT_X + 200 - 18 - 18;
+  const MARK_Y = RECT_Y + 9;
+  const muted = v(getTheme(), "textMuted");
+  const stroked = (body: string, ink = muted) =>
+    `<g transform="translate(${MARK_X} ${MARK_Y}) scale(0.75)" fill="none" stroke="${ink}" ` +
+    `stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${body}</g>`;
+
+  it("renders an unmarked box byte-identically to what it always did", () => {
+    const svg = renderSvg(ir, layout, { groups: [box] });
+    expect(svg).toContain(
+      `<rect data-group-id="argocd" x="${RECT_X}" y="${RECT_Y}" width="200" height="120" rx="16" ` +
+        `fill="${v(getTheme(), "bg1")}" fill-opacity="0.6" stroke="${v(getTheme(), "neutralStroke")}" stroke-width="1.2"/>` +
+        `<text x="${RECT_X + 18}" y="${RECT_Y + 23}" fill="${muted}" font-size="12" font-weight="700" letter-spacing=".5">ns</text>`,
+    );
+  });
+
+  it("adds the mark and nothing else — the rest of the document is untouched", () => {
+    const plain = renderSvg(ir, layout, { groups: [box] });
+    const marked = renderSvg(ir, layout, { groups: [{ ...box, mark: "database" }] });
+    expect(marked).not.toBe(plain);
+    expect(marked.replace(stroked(GENERIC_GLYPHS.database), "")).toBe(plain);
+  });
+
+  it("paints a GENERIC_GLYPHS key in the top-right gutter, stroked like the title", () => {
+    const svg = renderSvg(ir, layout, { groups: [{ ...box, mark: "user" }] });
+    expect(svg).toContain(stroked(GENERIC_GLYPHS.user));
+  });
+
+  it("degrades an unknown key to generic, the same as a card does", () => {
+    const svg = renderSvg(ir, layout, { groups: [{ ...box, mark: "no-such-glyph" }] });
+    expect(svg).toContain(stroked(GENERIC_GLYPHS.generic));
+  });
+
+  it("paints an authored colored mark as authored — no theme stroke, no fill:none", () => {
+    const MARK = `<circle cx="16" cy="16" r="12" fill="#326ce5"/>`;
+    const svg = renderSvg(ir, layout, { groups: [{ ...box, mark: { body: MARK, colored: true, viewBox: "0 0 32 32" } }] });
+    // 18px into a 32 box → 0.5625, and the wrapper says nothing about paint.
+    expect(svg).toContain(`<g transform="translate(${MARK_X} ${MARK_Y}) scale(0.5625)">${MARK}</g>`);
+  });
+
+  it("tints the mark with the box's status, exactly as it tints the title", () => {
+    const svg = renderSvg(ir, layout, { groups: [{ ...box, status: "warn", mark: "secret" }] });
+    const ink = v(getTheme(), "warnStroke");
+    expect(svg).toContain(stroked(GENERIC_GLYPHS.secret, ink));
+    // …the same value the title is painted in — one colour for the box's identity.
+    expect(svg).toContain(`fill="${ink}" font-size="12" font-weight="700"`);
+  });
+
+  it("follows the theme: a mark in the light theme carries the light token", () => {
+    const svg = renderSvg(ir, layout, { groups: [{ ...box, mark: "bucket" }], theme: getTheme("light") });
+    expect(svg).toContain(`stroke="${v(getTheme("light"), "textMuted")}"`);
+    expect(svg).not.toContain(muted);
+  });
+
+  it("leaves the title and the group id alone — the mark is not smuggled through them", () => {
+    const svg = renderSvg(ir, layout, { groups: [{ ...box, mark: "queue" }] });
+    expect(svg).toContain(`letter-spacing=".5">ns</text>`);
+    expect(svg).toContain(`data-group-id="argocd"`);
+  });
+
+  it("marks a titleless box too — the mark does not depend on there being a title", () => {
+    const svg = renderSvg(ir, layout, { groups: [{ ...box, title: "", mark: "dns" }] });
+    expect(svg).toContain(stroked(GENERIC_GLYPHS.dns));
+    expect(svg).not.toContain("letter-spacing=\".5\"");
   });
 });
 

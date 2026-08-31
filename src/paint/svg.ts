@@ -110,15 +110,29 @@ export class Canvas {
    * `groupId` (the container key — pinhole#103) is stamped as `data-group-id`
    * on the rect, the same hook `data-node-id` gives cards, so downstream
    * interaction can address a box structurally instead of sniffing rx + sibling
-   * text. */
-  groupBox(x: number, y: number, w: number, h: number, title?: string, status?: Status, groupId?: string): void {
+   * text. `mark` (pinhole#119) is an identity glyph for the box itself, painted
+   * in the opposite gutter from the title — a box can then be badged without the
+   * badge being smuggled into its title, which downstream consumers re-parse.
+   * Monochrome mark geometry is stroked in the title's colour, so it follows the
+   * theme and the status tint the way the title does. */
+  groupBox(
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    title?: string,
+    status?: Status,
+    groupId?: string,
+    mark?: Glyph | string,
+  ): void {
     const stroke = status && status !== "neutral" ? statusTokens(status).stroke : "neutralStroke";
     const idAttr = groupId ? ` data-group-id="${esc(groupId)}"` : "";
     this.body += `<rect${idAttr} x="${x}" y="${y}" width="${w}" height="${h}" rx="16" fill="${this.c("bg1")}" fill-opacity="0.6" stroke="${this.c(stroke)}" stroke-width="1.2"/>`;
+    const titleFill = status && status !== "neutral" ? this.c(stroke) : this.c("textMuted");
     if (title) {
-      const titleFill = status && status !== "neutral" ? this.c(stroke) : this.c("textMuted");
       this.body += `<text x="${x + 18}" y="${y + 23}" fill="${titleFill}" font-size="12" font-weight="700" letter-spacing=".5">${esc(title)}</text>`;
     }
+    if (mark) this.body += groupMarkMarkup(mark, x, y, w, titleFill);
   }
 
   /** Portable status card (native SVG text): accent bar, type icon, title,
@@ -331,6 +345,22 @@ export function glyphMarkup(glyph: Glyph | string, gx: number, gy: number, size:
     `<g transform="${transform}" fill="none" stroke="${stroke}" ` +
     `stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${g.body}</g>`
   );
+}
+
+/** The box mark's square, and its inset from the box's right edge — the mirror
+ * of the 18px left inset the title sits at, so title and mark bracket the same
+ * top gutter. */
+const GROUP_MARK_SIZE = 18;
+const GROUP_MARK_INSET = 18;
+
+/**
+ * Place a box's identity mark (pinhole#119) in the top-right gutter of a box at
+ * (x,y) of width `w`, vertically centred on the title row. The single emitter
+ * for it, the way `glyphMarkup` is for node glyphs — the static painter and the
+ * morph both come through here, so a marked box sits in the same corner in both.
+ */
+export function groupMarkMarkup(mark: Glyph | string, x: number, y: number, w: number, stroke: string): string {
+  return glyphMarkup(mark, x + w - GROUP_MARK_INSET - GROUP_MARK_SIZE, y + 9, GROUP_MARK_SIZE, stroke);
 }
 
 /** Ellipsize to a character budget (native SVG text can't clip itself). */
