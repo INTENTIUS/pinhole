@@ -83,6 +83,9 @@ interface MorphBoxData {
    * own width decides where it lands, and that changes per view, so the runtime
    * translates this into the gutter rather than the build baking a position. */
   mark?: string;
+  /** The box's text badge (#122). Right-aligned at runtime against the box's
+   * own width, for the same reason the mark is. */
+  badge?: string;
 }
 
 function placeBoxes(view: MorphView, morphW: number, morphH: number, theme: Theme): MorphBoxData[] {
@@ -103,6 +106,7 @@ function placeBoxes(view: MorphView, morphW: number, morphH: number, theme: Them
       h: Math.round(b.h),
       ...(b.status && b.status !== "neutral" ? { stroke: v(theme, statusTokens(b.status).stroke) } : {}),
       ...(glyph ? { mark: groupMarkMarkup(glyph, 0, 0, 0, ink) } : {}),
+      ...(b.badge ? { badge: b.badge } : {}),
     };
   });
 }
@@ -306,6 +310,14 @@ function applyBoxes(view, instant) {
       // Third child, always present, holds the box mark (#119) — empty for an
       // unmarked box, so rect/text/mark keep fixed indices.
       g.appendChild(document.createElementNS(SVGNS, "g"));
+      // Fourth, the text badge (#122), right-aligned at runtime like the mark.
+      const bd = document.createElementNS(SVGNS, "text");
+      bd.setAttribute("y", "23");
+      bd.setAttribute("text-anchor", "end");
+      bd.setAttribute("font-size", "11");
+      bd.setAttribute("font-weight", "600");
+      bd.setAttribute("fill-opacity", "0.85");
+      g.appendChild(bd);
       g.style.opacity = "0";
       boxLayer.appendChild(g);
       boxEls[b.key] = g;
@@ -322,6 +334,10 @@ function applyBoxes(view, instant) {
     const m = g.children[2];
     if (m.__mark !== (b.mark || "")) { m.innerHTML = b.mark || ""; m.__mark = b.mark || ""; }
     m.setAttribute("transform", "translate(" + b.w + ",0)");
+    const bd = g.children[3];
+    bd.textContent = b.badge || "";
+    bd.setAttribute("x", String(b.w - 18 - (b.mark ? 26 : 0)));
+    bd.style.fill = b.stroke || "";
     requestAnimationFrame(() => { g.style.opacity = "1"; g.classList.remove("pin-instant"); });
   }
   for (const key in boxEls) if (!seen.has(key)) boxEls[key].style.opacity = "0";

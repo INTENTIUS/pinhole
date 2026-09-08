@@ -290,6 +290,41 @@ describe("a group box can carry a mark (#119)", () => {
     expect(svg).toContain(`<g transform="translate(${MARK_X} ${MARK_Y}) scale(0.5625)">${MARK}</g>`);
   });
 
+  // #122: a box can also say a NAME about itself. `mark` is a glyph from a
+  // fixed vocabulary; an identity is text, and text is what this carries.
+  it("renders a box with no badge byte-identically to what it always did", () => {
+    const plain = renderSvg(ir, layout, { groups: [box] });
+    expect(renderSvg(ir, layout, { groups: [{ ...box, badge: undefined }] })).toBe(plain);
+    expect(renderSvg(ir, layout, { groups: [{ ...box, badge: "" }] })).toBe(plain);
+  });
+
+  it("paints the badge right-aligned on the title row, and nothing else", () => {
+    const plain = renderSvg(ir, layout, { groups: [box] });
+    const badged = renderSvg(ir, layout, { groups: [{ ...box, badge: "staging-converge-sa" }] });
+    const text =
+      `<text x="${RECT_X + 200 - 18}" y="${RECT_Y + 23}" text-anchor="end" fill="${muted}" ` +
+      `fill-opacity="0.85" font-size="11" font-weight="600">staging-converge-sa</text>`;
+    expect(badged).toContain(text);
+    expect(badged.replace(text, "")).toBe(plain);
+  });
+
+  it("steps left past the mark's gutter when the box carries both", () => {
+    const svg = renderSvg(ir, layout, { groups: [{ ...box, mark: "user", badge: "sa" }] });
+    expect(svg).toContain(`<text x="${RECT_X + 200 - 18 - 26}" y="${RECT_Y + 23}" text-anchor="end"`);
+    expect(svg).toContain(stroked(GENERIC_GLYPHS.user));
+  });
+
+  it("tints the badge with the box's status, exactly as it tints the title", () => {
+    const svg = renderSvg(ir, layout, { groups: [{ ...box, status: "warn", badge: "sa" }] });
+    expect(svg).toContain(`text-anchor="end" fill="${v(getTheme(), "warnStroke")}" fill-opacity="0.85"`);
+  });
+
+  it("escapes a badge, the way every other text field is escaped", () => {
+    const svg = renderSvg(ir, layout, { groups: [{ ...box, badge: "a<b&c" }] });
+    expect(svg).toContain(">a&lt;b&amp;c</text>");
+    expect(svg).not.toContain("a<b&c");
+  });
+
   it("tints the mark with the box's status, exactly as it tints the title", () => {
     const svg = renderSvg(ir, layout, { groups: [{ ...box, status: "warn", mark: "secret" }] });
     const ink = v(getTheme(), "warnStroke");

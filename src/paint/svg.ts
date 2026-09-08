@@ -114,7 +114,15 @@ export class Canvas {
    * in the opposite gutter from the title — a box can then be badged without the
    * badge being smuggled into its title, which downstream consumers re-parse.
    * Monochrome mark geometry is stroked in the title's colour, so it follows the
-   * theme and the status tint the way the title does. */
+   * theme and the status tint the way the title does.
+   *
+   * `badge` (pinhole#122) is a short piece of TEXT for the box — a name the box
+   * asserts about itself, which a glyph cannot carry. It sits on the title row
+   * at the right, inside the mark's gutter when both are present, in the title's
+   * own colour at a smaller weight so it reads as an annotation rather than a
+   * second title. The consumer this exists for is behold naming the identity an
+   * operating loop runs as on the loop's own box. Text, not a title suffix,
+   * because titles are load-bearing downstream (pinhole#119). */
   groupBox(
     x: number,
     y: number,
@@ -124,6 +132,7 @@ export class Canvas {
     status?: Status,
     groupId?: string,
     mark?: Glyph | string,
+    badge?: string,
   ): void {
     const stroke = status && status !== "neutral" ? statusTokens(status).stroke : "neutralStroke";
     const idAttr = groupId ? ` data-group-id="${esc(groupId)}"` : "";
@@ -133,6 +142,12 @@ export class Canvas {
       this.body += `<text x="${x + 18}" y="${y + 23}" fill="${titleFill}" font-size="12" font-weight="700" letter-spacing=".5">${esc(title)}</text>`;
     }
     if (mark) this.body += groupMarkMarkup(mark, x, y, w, titleFill);
+    if (badge) {
+      // Right-aligned so it ends where the title begins on the other side,
+      // stepping left past the mark's gutter when the box carries one.
+      const right = x + w - GROUP_MARK_INSET - (mark ? GROUP_MARK_SIZE + 8 : 0);
+      this.body += `<text x="${right}" y="${y + 23}" text-anchor="end" fill="${titleFill}" fill-opacity="0.85" font-size="11" font-weight="600">${esc(badge)}</text>`;
+    }
   }
 
   /** Portable status card (native SVG text): accent bar, type icon, title,
