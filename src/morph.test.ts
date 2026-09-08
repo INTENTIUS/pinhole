@@ -123,6 +123,23 @@ describe("renderMorphHtml", () => {
     expect(out).toContain('m.setAttribute("transform", "translate(" + b.w + ",0)")');
   });
 
+  // #122: the text badge rides the morph the same way, carried as data so the
+  // runtime can right-align it against whatever width the current view has.
+  it("carries a box badge across the views, and omits the key when there is none", () => {
+    const badged: MorphView[] = views.map((view, i) => ({
+      ...view,
+      groups: [{ title: "argocd", id: "argocd", x: 60, y: 50, w: 120 + i * 40, h: 100, badge: "staging-converge-sa" }],
+    }));
+    const VIEWS = JSON.parse(renderMorphHtml(badged, { title: "Badged" }).match(/const VIEWS = (\[[\s\S]*?\]);\n/)![1].replace(/\\u003c/g, "<"));
+    expect(VIEWS[0].boxes[0].badge).toBe("staging-converge-sa");
+    expect(VIEWS[1].boxes[0].badge).toBe("staging-converge-sa");
+    // An unbadged box carries no key at all, so nothing changes for a caller
+    // that never sets one.
+    const plainOut = renderMorphHtml(views.map((v2) => ({ ...v2, groups: [{ title: "argocd", id: "argocd", x: 60, y: 50, w: 120, h: 100 }] })), { title: "Plain" });
+    const plain = JSON.parse(plainOut.match(/const VIEWS = (\[[\s\S]*?\]);\n/)![1].replace(/\\u003c/g, "<"));
+    expect("badge" in plain[0].boxes[0]).toBe(false);
+  });
+
   it("tints a marked box's glyph with its status, as the static painter does", () => {
     const marked: MorphView[] = views.map((view) => ({
       ...view,

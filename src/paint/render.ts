@@ -60,6 +60,19 @@ export interface GroupBox {
    * the theme and the status tint exactly as the title does. Absent = the box
    * renders byte-identical to before this field existed. */
   mark?: string | GlyphSpec;
+  /** A short piece of TEXT the box asserts about itself (pinhole#122), painted
+   * on the title row at the right, in the title's colour at a lighter weight.
+   *
+   * `mark` badges a box with a glyph from a fixed vocabulary; some things a box
+   * needs to say are a name, and a name is not a glyph. The consumer this
+   * exists for is behold naming the identity an operating loop runs as on the
+   * loop's own box — "who is allowed to do this", readable off the estate.
+   *
+   * Text rather than a title suffix, for the reason `mark` exists: titles are
+   * load-bearing downstream (pinhole#119), and a consumer that re-parses one
+   * would silently break. Keep it short — it shares the title row, and nothing
+   * truncates it. Absent = the box renders byte-identical to before. */
+  badge?: string;
 }
 
 interface FootprintOptions {
@@ -186,6 +199,7 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
       grp.status,
       grp.id,
       groupMark(grp),
+      grp.badge,
     );
   }
 
