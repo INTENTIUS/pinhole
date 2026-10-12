@@ -22,6 +22,25 @@ export interface EdgeRel {
   to: string;
   via?: string;
   toAttr?: string;
+  /** The edge's kind (chant's IREdgeKind). Stamped as `data-edge-kind` unless it
+   * is "ref" (or absent): a reference edge stays byte-identical to pre-0.4 output,
+   * so a reader takes a missing `data-edge-kind` to mean "ref". */
+  kind?: string;
+  /** chant's `crossPipeline`: the edge leaves its source's CI pipeline. Stamped
+   * as `data-edge-cross="true"`. */
+  cross?: boolean;
+}
+
+/** The `data-edge-*` identity hooks for an edge (or the chip labelling it). One
+ * place, so the edge and its chip can never disagree. */
+export function edgeRelAttrs(rel: EdgeRel, withToAttr = true): string {
+  return (
+    ` data-edge-from="${esc(rel.from)}" data-edge-to="${esc(rel.to)}"` +
+    (rel.via ? ` data-edge-via="${esc(rel.via)}"` : "") +
+    (withToAttr && rel.toAttr ? ` data-edge-to-attr="${esc(rel.toAttr)}"` : "") +
+    (rel.kind && rel.kind !== "ref" ? ` data-edge-kind="${esc(rel.kind)}"` : "") +
+    (rel.cross ? ` data-edge-cross="true"` : "")
+  );
 }
 
 interface StatusTokens {
@@ -283,10 +302,7 @@ export class Canvas {
       this.body += line;
       return;
     }
-    const attrs =
-      ` data-edge-from="${esc(rel.from)}" data-edge-to="${esc(rel.to)}"` +
-      (rel.via ? ` data-edge-via="${esc(rel.via)}"` : "") +
-      (rel.toAttr ? ` data-edge-to-attr="${esc(rel.toAttr)}"` : "");
+    const attrs = edgeRelAttrs(rel);
     // The hit-path is transparent but `pointer-events="stroke"` makes its full
     // width hoverable — a 1.4px line is otherwise near-impossible to hit.
     this.body +=
@@ -301,9 +317,7 @@ export class Canvas {
    * chip and line by identity instead of document order, which its own
    * hover-raise re-appending destroys. */
   edgeLabel(x: number, y: number, text: string, rel?: EdgeRel): void {
-    const relAttrs = rel
-      ? ` data-edge-from="${esc(rel.from)}" data-edge-to="${esc(rel.to)}"` + (rel.via ? ` data-edge-via="${esc(rel.via)}"` : "")
-      : "";
+    const relAttrs = rel ? edgeRelAttrs(rel, false) : "";
     const w = text.length * 5.7 + 14;
     this.body +=
       `<g${relAttrs}><rect x="${(x - w / 2).toFixed(1)}" y="${y - 9}" width="${w.toFixed(1)}" height="18" rx="9" ` +

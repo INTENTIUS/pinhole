@@ -9,6 +9,8 @@ export type {
   GraphIR,
   IRNode,
   IREdge,
+  IREdgeKind,
+  IRDanglingRef,
   IRGroups,
   IRExport,
   IRImport,

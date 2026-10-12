@@ -568,3 +568,18 @@ describe("renderTiersApp — composite tier-zoom (render chant's altitude, drill
     expect(ST[0].pos.appService).toBeUndefined();
   });
 });
+
+describe("renderContainment — edge kind (#124)", () => {
+  it("stamps data-edge-kind and data-edge-cross on a CI dependency line, not on a ref", () => {
+    const ci: GraphIR = {
+      ...ir,
+      edges: [
+        ...ir.edges.filter((e) => e.to !== "assets"),
+        { from: "web", to: "assets", kind: "calls", viaAttr: "uses", crossPipeline: true },
+      ],
+    };
+    const out = renderContainment(ci, { title: "T" });
+    expect(out).toContain('data-edge-from="web" data-edge-to="assets" data-edge-via="uses" data-edge-kind="calls" data-edge-cross="true"');
+    expect(svg).not.toContain("data-edge-kind");
+  });
+});

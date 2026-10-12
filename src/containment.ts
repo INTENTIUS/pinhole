@@ -20,7 +20,7 @@
 import type { GraphIR } from "./ir.ts";
 import { getTheme, v, defs, THEMES, type Theme } from "./theme.ts";
 import { resolveGlyph, type Glyph } from "./icons.ts";
-import { clip, esc, glyphMarkup } from "./paint/svg.ts";
+import { clip, edgeRelAttrs, esc, glyphMarkup } from "./paint/svg.ts";
 import { defaultPack, type Role, type Focus, type SaliencePack, type Hints } from "./pack.ts";
 import { isImportSocket } from "./compose.ts";
 import type { DiffStatus } from "./diff.ts";
@@ -89,7 +89,7 @@ interface Analysis {
   meta: Record<string, { kind: string; lexicon: string }>;
   parent: Record<string, string>;
   children: Record<string, string[]>;
-  depEdges: Array<{ from: string; to: string; via?: string; toAttr?: string; label?: string }>;
+  depEdges: Array<{ from: string; to: string; via?: string; toAttr?: string; label?: string; kind?: string; cross?: boolean }>;
   /** Edges the IR doesn't carry but a composite implies (an ALB fronts the
    * service it was created with) — drawn as a hint, distinct from real refs. */
   implied: Array<{ from: string; to: string }>;
@@ -268,7 +268,7 @@ function analyze(ir: GraphIR, focus: Focus = "app", pack: SaliencePack = default
   }
 
   // Dependency lines: kept→kept refs that didn't become containment.
-  const depEdges: Array<{ from: string; to: string; via?: string; toAttr?: string }> = [];
+  const depEdges: Analysis["depEdges"] = [];
   const seenEdge = new Set<string>();
   for (const e of ir.edges) {
     if (e.from === e.to || !kept.has(e.from) || !kept.has(e.to)) continue;
@@ -276,7 +276,7 @@ function analyze(ir: GraphIR, focus: Focus = "app", pack: SaliencePack = default
     const key = `${e.from}>${e.to}`;
     if (seenEdge.has(key)) continue;
     seenEdge.add(key);
-    depEdges.push({ from: e.from, to: e.to, via: e.viaAttr, toAttr: e.toAttr });
+    depEdges.push({ from: e.from, to: e.to, via: e.viaAttr, toAttr: e.toAttr, kind: e.kind, cross: e.crossPipeline });
   }
 
   const children: Record<string, string[]> = {};
@@ -552,7 +552,7 @@ export function renderContainment(ir: GraphIR, opts: ContainmentOptions = {}): s
   const obstacleIds = [...kept].filter((id) => id in L.X);
   const route = (from: string, to: string): string => routeEdge(from, to, L, obstaclesFor(from, to, obstacleIds, L, parent));
   let lines = "";
-  for (const e of depEdges) lines += depEdgeStr(e.from, e.to, route(e.from, e.to), e.via, e.toAttr, theme, false, e.label, edgeLabelPos(e.from, e.to, L));
+  for (const e of depEdges) lines += depEdgeStr(e.from, e.to, route(e.from, e.to), e.via, e.toAttr, theme, false, e.label, edgeLabelPos(e.from, e.to, L), undefined, e);
   for (const e of implied) lines += depEdgeStr(e.from, e.to, route(e.from, e.to), undefined, undefined, theme, true);
 
   return (
@@ -848,11 +848,9 @@ function edgeLabel(label: string, p: { x: number; y: number }, theme: Theme): st
   );
 }
 
-function depEdgeStr(from: string, to: string, d: string, via: string | undefined, toAttr: string | undefined, theme: Theme, implied = false, label?: string, labelPos?: { x: number; y: number }, diff?: string): string {
+function depEdgeStr(from: string, to: string, d: string, via: string | undefined, toAttr: string | undefined, theme: Theme, implied = false, label?: string, labelPos?: { x: number; y: number }, diff?: string, ci?: { kind?: string; cross?: boolean }): string {
   const attrs =
-    ` data-edge-from="${esc(from)}" data-edge-to="${esc(to)}"` +
-    (via ? ` data-edge-via="${esc(via)}"` : "") +
-    (toAttr ? ` data-edge-to-attr="${esc(toAttr)}"` : "") +
+    edgeRelAttrs({ from, to, via, toAttr, kind: ci?.kind, cross: ci?.cross }) +
     (label ? ` data-edge-import="${esc(label)}"` : "") +
     (diff && diff !== "same" ? ` data-edge-diff="${diff}"` : "") +
     (implied ? ` data-edge-implied="1"` : "");
@@ -935,7 +933,7 @@ function renderStatesArtifact(
     let edgesHtml = "";
     for (const e of a.depEdges) {
       if (!(e.from in L.X) || !(e.to in L.X)) continue;
-      edgesHtml += depEdgeStr(e.from, e.to, route(e.from, e.to), e.via, e.toAttr, theme, false, e.label, edgeLabelPos(e.from, e.to, L), edgeDiffOf?.(e.from, e.to));
+      edgesHtml += depEdgeStr(e.from, e.to, route(e.from, e.to), e.via, e.toAttr, theme, false, e.label, edgeLabelPos(e.from, e.to, L), edgeDiffOf?.(e.from, e.to), e);
     }
     for (const e of a.implied) {
       if (!(e.from in L.X) || !(e.to in L.X)) continue;
@@ -1094,7 +1092,7 @@ export function renderTiersApp(composites: GraphIR, members: GraphIR, opts: Cont
     const parent: Record<string, string> = {};
     const children: Record<string, string[]> = {};
     const hidden: Record<string, string[]> = {};
-    const depEdges: Analysis["depEdges"] = composites.edges.map((e) => ({ from: e.from, to: e.to, via: e.viaAttr, toAttr: e.toAttr }));
+    const depEdges: Analysis["depEdges"] = composites.edges.map((e) => ({ from: e.from, to: e.to, via: e.viaAttr, toAttr: e.toAttr, kind: e.kind, cross: e.crossPipeline }));
     const reaches = (from: string, target: string): boolean => {
       let cur: string | undefined = from;
       const seen = new Set<string>();
@@ -1121,7 +1119,7 @@ export function renderTiersApp(composites: GraphIR, members: GraphIR, opts: Cont
       for (const m of mem) role[m] = children[m]?.length ? "place" : "thing";
       for (const e of members.edges) {
         if (e.viaAttr && nests.has(e.viaAttr)) continue;
-        if (memSet.has(e.from) && memSet.has(e.to) && e.from !== e.to) depEdges.push({ from: e.from, to: e.to, via: e.viaAttr, toAttr: e.toAttr });
+        if (memSet.has(e.from) && memSet.has(e.to) && e.from !== e.to) depEdges.push({ from: e.from, to: e.to, via: e.viaAttr, toAttr: e.toAttr, kind: e.kind, cross: e.crossPipeline });
       }
     };
     const showComposites = (): void => {

@@ -199,3 +199,27 @@ describe("renderMorphHtml", () => {
     expect(Object.keys(VIEWS[2].pos)).toContain("sg");
   });
 });
+
+describe("renderMorphHtml — edge kind (#124)", () => {
+  const ci: GraphIR = {
+    nodes: [
+      { id: "build", kind: "Job", lexicon: "github", attrs: {} },
+      { id: "wf", kind: "Workflow", lexicon: "github", attrs: {} },
+    ],
+    edges: [{ from: "build", to: "wf", kind: "calls", viaAttr: "uses", crossPipeline: true }],
+    groups: {},
+  };
+  const out = renderMorphHtml([
+    { name: "ci", ir: ci, layout: { width: 200, height: 200, nodes: [{ id: "wf", x: 100, y: 180 }, { id: "build", x: 100, y: 20 }] } },
+  ]);
+
+  it("carries kind and cross for a CI edge and stamps them on the morph path", () => {
+    expect(out).toContain('"kind":"calls","cross":true');
+    expect(out).toContain('p.setAttribute("data-edge-kind", e.kind)');
+    expect(out).toContain('p.setAttribute("data-edge-cross", "true")');
+  });
+
+  it("adds neither key to a ref edge's view data", () => {
+    expect(html).toContain('{"from":"netSubnet","to":"netVpc","via":"VpcId"}');
+  });
+});

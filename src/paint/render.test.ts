@@ -67,6 +67,49 @@ describe("renderSvg edge hooks (relationship rollover)", () => {
   });
 });
 
+describe("renderSvg edge kind (#124)", () => {
+  const ciIr: GraphIR = {
+    nodes: [
+      { id: "build", kind: "Job", lexicon: "github", attrs: {} },
+      { id: "test", kind: "Job", lexicon: "github", attrs: {} },
+      { id: "wf", kind: "Workflow", lexicon: "github", attrs: {} },
+    ],
+    edges: [
+      { from: "test", to: "build", kind: "needs", viaAttr: "needs" },
+      { from: "build", to: "wf", kind: "calls", viaAttr: "uses", crossPipeline: true },
+    ],
+    groups: {},
+  };
+  const ciLayout: Layout = {
+    width: 300,
+    height: 300,
+    nodes: [
+      { id: "wf", x: 150, y: 280 },
+      { id: "build", x: 150, y: 150 },
+      { id: "test", x: 150, y: 20 },
+    ],
+  };
+  const svg = renderSvg(ciIr, ciLayout);
+
+  it("stamps data-edge-kind on a CI edge and on its chip", () => {
+    const needs = svg.match(/<g data-edge-from="test" data-edge-to="build" data-edge-via="needs" data-edge-kind="needs">/g) ?? [];
+    expect(needs).toHaveLength(2); // the line, and the chip that labels it
+    expect(svg).not.toMatch(/data-edge-to="build"[^>]*data-edge-cross/);
+  });
+
+  it("stamps data-edge-cross on an edge that leaves its pipeline", () => {
+    const calls = svg.match(/<g data-edge-from="build" data-edge-to="wf" data-edge-via="uses" data-edge-kind="calls" data-edge-cross="true">/g) ?? [];
+    expect(calls).toHaveLength(2);
+  });
+
+  it("leaves a ref edge without data-edge-kind, so pre-0.4 output is byte-identical", () => {
+    const plain = renderSvg(ir, layout);
+    expect(plain).not.toContain("data-edge-kind");
+    expect(plain).not.toContain("data-edge-cross");
+    expect(plain).toContain('<g data-edge-from="subnet" data-edge-to="vpc" data-edge-via="network"><path');
+  });
+});
+
 describe("renderSvg node hooks", () => {
   it("stamps data-node-id on every node, in both tiers", () => {
     for (const tier of ["portable", "rich"] as const) {
