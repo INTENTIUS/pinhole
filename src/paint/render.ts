@@ -215,13 +215,13 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
       `M ${a.cx} ${a.cy} C ${a.cx} ${(a.cy + b.cy) / 2}, ${b.cx} ${(a.cy + b.cy) / 2}, ${b.cx} ${b.cy}`,
       1.4,
       flow,
-      { from: e.from, to: e.to, via: e.viaAttr, toAttr: e.toAttr },
+      { from: e.from, to: e.to, via: e.viaAttr, toAttr: e.toAttr, kind: e.kind, cross: e.crossPipeline },
       dashed,
     );
     // Draw the relation/branch label on the edge (concept diagrams). Placed at the
     // path midpoint as a chip that cuts across the line, stamped with its edge's
     // identity (#110) so it is not an anonymous sibling.
-    if (e.viaAttr) c.edgeLabel((a.cx + b.cx) / 2, (a.cy + b.cy) / 2, e.viaAttr, { from: e.from, to: e.to, via: e.viaAttr });
+    if (e.viaAttr) c.edgeLabel((a.cx + b.cx) / 2, (a.cy + b.cy) / 2, e.viaAttr, { from: e.from, to: e.to, via: e.viaAttr, kind: e.kind, cross: e.crossPipeline });
   }
 
   for (const node of ir.nodes) {

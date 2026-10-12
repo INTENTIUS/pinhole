@@ -101,3 +101,61 @@ describe("composeStacks — cross-stack edges (#513)", () => {
     expect(merged.edges.some((e) => e.from === "api/other")).toBe(false);
   });
 });
+
+describe("composeStacks — CI edges, dangling refs and the other groups (#124)", () => {
+  const ci: GraphIR = {
+    nodes: [
+      { id: "wf", kind: "GitHub::Actions::Workflow", lexicon: "github", attrs: {} },
+      { id: "build", kind: "GitHub::Actions::Job", lexicon: "github", attrs: {} },
+      { id: "test", kind: "GitHub::Actions::Job", lexicon: "github", attrs: {} },
+    ],
+    edges: [
+      { from: "test", to: "build", kind: "needs", viaAttr: "needs" },
+      { from: "build", to: "wf", kind: "calls", viaAttr: "uses", crossPipeline: true },
+    ],
+    groups: {
+      byPipeline: { ci: ["wf", "build", "test"] },
+      byContainer: { wf: ["build", "test"] },
+      byWave: { "wave-0": ["build"], "wave-1": ["test"] },
+    },
+    dangling: [
+      { from: "test", kind: "needs", path: "needs", value: "lint" },
+      { from: "build", kind: "calls", path: "uses", value: "org/repo/.github/workflows/x.yml@main", crossPipeline: true },
+    ],
+  };
+  const other: GraphIR = {
+    nodes: [{ id: "build", kind: "GitHub::Actions::Job", lexicon: "github", attrs: {} }],
+    edges: [],
+    groups: { byPipeline: { ci: ["build"] } },
+  };
+  const merged = composeStacks([{ name: "app", ir: ci }, { name: "lib", ir: other }]);
+
+  it("keeps each edge's kind and crossPipeline as it namespaces the endpoints", () => {
+    expect(merged.edges).toEqual([
+      { from: "app/test", to: "app/build", kind: "needs", viaAttr: "needs" },
+      { from: "app/build", to: "app/wf", kind: "calls", viaAttr: "uses", crossPipeline: true },
+    ]);
+  });
+
+  it("keeps dangling refs, namespacing `from` and leaving the written value alone", () => {
+    expect(merged.dangling).toEqual([
+      { from: "app/test", kind: "needs", path: "needs", value: "lint" },
+      { from: "app/build", kind: "calls", path: "uses", value: "org/repo/.github/workflows/x.yml@main", crossPipeline: true },
+    ]);
+  });
+
+  it("keeps byPipeline per stack, so two stacks' same-named pipelines stay apart", () => {
+    expect(merged.groups.byPipeline).toEqual({ "app/ci": ["app/wf", "app/build", "app/test"], "lib/ci": ["lib/build"] });
+  });
+
+  it("keeps byContainer and byWave, keys and members prefixed", () => {
+    expect(merged.groups.byContainer).toEqual({ "app/wf": ["app/build", "app/test"] });
+    expect(merged.groups.byWave).toEqual({ "app/wave-0": ["app/build"], "app/wave-1": ["app/test"] });
+  });
+
+  it("adds none of them when no stack carried any", () => {
+    const plain = composeStacks([{ name: "lib", ir: { ...other, groups: {} } }]);
+    expect(Object.keys(plain.groups).sort()).toEqual(["byComposite", "byLexicon", "byStack"]);
+    expect("dangling" in plain).toBe(false);
+  });
+});

@@ -1,4 +1,4 @@
-import type { GraphIR, IRNode, IREdge } from "./ir.ts";
+import type { GraphIR, IRNode, IREdge, IRDanglingRef, IRGroups } from "./ir.ts";
 
 /**
  * Multi-stack composition. pinhole renders *the IR*, not chant — so several
@@ -63,6 +63,13 @@ export function composeStacks(stacks: Array<{ name: string; ir: GraphIR }>): Gra
   const byStack: Record<string, string[]> = {};
   const byLexicon: Record<string, string[]> = {};
   const byComposite: Record<string, string[]> = {};
+  // Groups keyed by a name the stack chose (a pipeline, a wave) or by a node id
+  // (a container): both the key and the members take the stack prefix, so two
+  // stacks' `ci` pipelines (or `wave-0`s) stay two groups.
+  const byPipeline: Record<string, string[]> = {};
+  const byContainer: Record<string, string[]> = {};
+  const byWave: Record<string, string[]> = {};
+  const dangling: IRDanglingRef[] = [];
 
   // Each stack's exports, keyed by normalised name → its (namespaced) producer.
   const producerOf = new Map<string, string>();
@@ -101,7 +108,26 @@ export function composeStacks(stacks: Array<{ name: string; ir: GraphIR }>): Gra
       }
     }
     for (const e of ir.edges) edges.push({ ...e, from: ns(e.from), to: ns(e.to) });
+    // `value` is the reference as written in source and names nothing in this
+    // graph, so only `from` is namespaced.
+    for (const d of ir.dangling ?? []) dangling.push({ ...d, from: ns(d.from) });
+    const g = ir.groups ?? {};
+    for (const [src, dst] of [
+      [g.byPipeline, byPipeline],
+      [g.byContainer, byContainer],
+      [g.byWave, byWave],
+    ] as const) {
+      for (const [key, ids] of Object.entries(src ?? {})) (dst[ns(key)] ??= []).push(...ids.map(ns));
+    }
   }
 
-  return { nodes, edges, groups: { byStack, byLexicon, byComposite } };
+  const groups: IRGroups = { byStack, byLexicon, byComposite };
+  // Present only when some stack carried one, so a composition of plain stacks
+  // is unchanged.
+  if (Object.keys(byPipeline).length) groups.byPipeline = byPipeline;
+  if (Object.keys(byContainer).length) groups.byContainer = byContainer;
+  if (Object.keys(byWave).length) groups.byWave = byWave;
+  const out: GraphIR = { nodes, edges, groups };
+  if (dangling.length) out.dangling = dangling;
+  return out;
 }

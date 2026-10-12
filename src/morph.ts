@@ -136,7 +136,16 @@ export function renderMorphHtml(views: MorphView[], opts: MorphOptions = {}): st
   const viewData = views.map((view) => ({
     name: view.name,
     pos: place(view, morphW, morphH),
-    edges: view.ir.edges.map((e) => ({ from: e.from, to: e.to, via: e.viaAttr, toAttr: e.toAttr })),
+    // kind/cross ride only when they say something (a CI edge), so a plain ref
+    // edge's JSON is unchanged.
+    edges: view.ir.edges.map((e) => ({
+      from: e.from,
+      to: e.to,
+      via: e.viaAttr,
+      toAttr: e.toAttr,
+      kind: e.kind && e.kind !== "ref" ? e.kind : undefined,
+      cross: e.crossPipeline || undefined,
+    })),
     boxes: placeBoxes(view, morphW, morphH, theme),
   }));
 
@@ -349,6 +358,8 @@ function buildEdges(view) {
     if (!a || !b) continue;
     const p = document.createElementNS(SVGNS, "path");
     p.setAttribute("class", "pin-medge");
+    if (e.kind) p.setAttribute("data-edge-kind", e.kind);
+    if (e.cross) p.setAttribute("data-edge-cross", "true");
     p.setAttribute("d", "M " + a.x + " " + a.y + " C " + a.x + " " + ((a.y + b.y) / 2) + ", " + b.x + " " + ((a.y + b.y) / 2) + ", " + b.x + " " + b.y);
     p.style.opacity = "0";
     edgeLayer.appendChild(p);
