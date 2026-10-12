@@ -15,6 +15,7 @@ import { getTheme, v, defs, THEMES, type Theme } from "./theme.ts";
 import { resolveGlyph, type Glyph } from "./icons.ts";
 import { clip, esc, glyphMarkup, groupMarkMarkup, statusGround, statusTokens } from "./paint/svg.ts";
 import { groupMark, type GroupBox } from "./paint/render.ts";
+import { edgeLanes, laneOffset } from "./edges.ts";
 
 const MARGIN = 80;
 const TITLE_BAND = 90;
@@ -138,14 +139,20 @@ export function renderMorphHtml(views: MorphView[], opts: MorphOptions = {}): st
     pos: place(view, morphW, morphH),
     // kind/cross ride only when they say something (a CI edge), so a plain ref
     // edge's JSON is unchanged.
-    edges: view.ir.edges.map((e) => ({
-      from: e.from,
-      to: e.to,
-      via: e.viaAttr,
-      toAttr: e.toAttr,
-      kind: e.kind && e.kind !== "ref" ? e.kind : undefined,
-      cross: e.crossPipeline || undefined,
-    })),
+    // `off` is a parallel lane's perpendicular shift (#128); it rides only when
+    // the pair has more than one kind, for the same reason.
+    edges: (() => {
+      const lanes = edgeLanes(view.ir.edges);
+      return view.ir.edges.map((e, i) => ({
+        from: e.from,
+        to: e.to,
+        via: e.viaAttr,
+        toAttr: e.toAttr,
+        kind: e.kind && e.kind !== "ref" ? e.kind : undefined,
+        cross: e.crossPipeline || undefined,
+        off: lanes[i].lanes > 1 ? laneOffset(lanes[i]) : undefined,
+      }));
+    })(),
     boxes: placeBoxes(view, morphW, morphH, theme),
   }));
 
@@ -360,7 +367,13 @@ function buildEdges(view) {
     p.setAttribute("class", "pin-medge");
     if (e.kind) p.setAttribute("data-edge-kind", e.kind);
     if (e.cross) p.setAttribute("data-edge-cross", "true");
-    p.setAttribute("d", "M " + a.x + " " + a.y + " C " + a.x + " " + ((a.y + b.y) / 2) + ", " + b.x + " " + ((a.y + b.y) / 2) + ", " + b.x + " " + b.y);
+    let ox = 0, oy = 0;
+    if (e.off) {
+      const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1;
+      ox = (-dy / len) * e.off; oy = (dx / len) * e.off;
+    }
+    const my = (a.y + b.y) / 2;
+    p.setAttribute("d", "M " + (a.x + ox) + " " + (a.y + oy) + " C " + (a.x + ox) + " " + (my + oy) + ", " + (b.x + ox) + " " + (my + oy) + ", " + (b.x + ox) + " " + (b.y + oy));
     p.style.opacity = "0";
     edgeLayer.appendChild(p);
     requestAnimationFrame(() => { p.style.opacity = "1"; });

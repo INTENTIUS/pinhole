@@ -281,7 +281,7 @@ stage.addEventListener("mousemove", (e) => {
   }
   const edgeEl = edgeElFrom(e.target);
   if (edgeEl) {
-    const key = "e:" + edgeEl.getAttribute("data-edge-from") + ">" + edgeEl.getAttribute("data-edge-to");
+    const key = "e:" + edgeEl.getAttribute("data-edge-from") + ">" + edgeEl.getAttribute("data-edge-to") + ">" + (edgeEl.getAttribute("data-edge-kind") || "");
     if (key !== focusKey) { focusKey = key; focusEdge(edgeEl, e); } else { placeTip(e); }
     return;
   }

@@ -9,20 +9,21 @@
  * (a bumped `desiredCount`) would be invisible at the altitude you actually read.
  */
 import type { GraphIR, IRNode } from "./ir.ts";
+import { edgeKey } from "./edges.ts";
 
 export type DiffStatus = "added" | "removed" | "changed" | "same";
 export interface AttrDelta { key: string; before: unknown; after: unknown }
 export interface GraphDiff {
   status: Record<string, DiffStatus>;
   deltas: Record<string, AttrDelta[]>;
-  /** Edge status keyed by `from>to` — added/removed/same (edges don't "change"). */
+  /** Edge status keyed by {@link edgeKey}: `from>to` for a ref edge,
+   * `from>to>kind` for any other kind (#128) — added/removed/same (edges don't
+   * "change"; a kind change on a pair reads as one removed and one added). */
   edges: Record<string, DiffStatus>;
 }
 
-const edgeKey = (e: { from: string; to: string }): string => `${e.from}>${e.to}`;
-
-/** Classify edges by `from>to`: present in both = same, after-only = added,
- * before-only = removed. */
+/** Classify edges by {@link edgeKey}: present in both = same, after-only =
+ * added, before-only = removed. */
 export function diffEdges(before: GraphIR["edges"], after: GraphIR["edges"]): Record<string, DiffStatus> {
   const b = new Set(before.map(edgeKey)), a = new Set(after.map(edgeKey));
   const out: Record<string, DiffStatus> = {};
@@ -83,9 +84,12 @@ export function unionGraph(before: GraphIR, after: GraphIR): GraphIR {
   for (const n of before.nodes) byId.set(n.id, n);
   for (const n of after.nodes) byId.set(n.id, n); // after wins on collision
   const edges = [...after.edges];
-  const seen = new Set(after.edges.map((e) => `${e.from}>${e.to}>${e.viaAttr ?? ""}`));
+  // Keyed like diffEdges plus the attribute, so a removed `extends` on a pair
+  // that still `needs` is carried over to be ghosted (#128).
+  const unionKey = (e: GraphIR["edges"][number]): string => `${edgeKey(e)}>${e.viaAttr ?? ""}`;
+  const seen = new Set(after.edges.map(unionKey));
   for (const e of before.edges) {
-    const k = `${e.from}>${e.to}>${e.viaAttr ?? ""}`;
+    const k = unionKey(e);
     if (!seen.has(k)) { seen.add(k); edges.push(e); }
   }
   return { nodes: [...byId.values()], edges, groups: after.groups };

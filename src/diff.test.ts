@@ -77,3 +77,28 @@ describe("deltaSummary", () => {
     expect(deltaSummary([{ key: "X", before: undefined, after: 5 }])).toBe("X: ∅ → 5");
   });
 });
+
+describe("diffEdges — two kinds on one pair (#128)", () => {
+  const needs = { from: "deploy", to: "build", kind: "needs" as const };
+  const ext = { from: "deploy", to: "build", kind: "extends" as const };
+
+  it("gives each kind on a pair its own entry", () => {
+    const e = diffEdges([needs], [needs, ext]);
+    expect(e).toEqual({ "deploy>build>needs": "same", "deploy>build>extends": "added" });
+  });
+
+  it("sees a kind change on a pair as a change", () => {
+    expect(diffEdges([needs], [ext])).toEqual({ "deploy>build>needs": "removed", "deploy>build>extends": "added" });
+  });
+
+  it("keeps ref edges keyed from>to", () => {
+    expect(diffEdges([{ from: "a", to: "b", kind: "ref" }], [])).toEqual({ "a>b": "removed" });
+  });
+
+  it("unionGraph carries a removed kind on a pair that kept another", () => {
+    const g = (edges: GraphIR["edges"]): GraphIR => ({ nodes: [n("deploy"), n("build")], edges, groups: {} });
+    const u = unionGraph(g([needs, ext]), g([needs]));
+    expect(u.edges).toHaveLength(2);
+    expect(u.edges).toContainEqual(ext);
+  });
+});

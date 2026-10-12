@@ -42,6 +42,7 @@ export {
   type ConceptLayout,
   type ConceptLayoutOptions,
 } from "./concept.ts";
+export { edgeKey, layoutEdgeName, edgeLanes, type EdgeIdentity, type EdgeLane } from "./edges.ts";
 export { renderHtml, type HtmlOptions } from "./html.ts";
 export { renderMorphHtml, type MorphView, type MorphOptions } from "./morph.ts";
 // Multi-stack composition (#513/#42/#46): merge N project IRs into one — namespaced
