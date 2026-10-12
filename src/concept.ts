@@ -33,6 +33,18 @@ export interface ConceptLayoutOptions {
   /** Titled groups — `{ title: [nodeIds] }`. Members are kept together (dagre
    * compound layout) and framed by a boundary box. A node may sit in one group. */
   groups?: Record<string, string[]>;
+  /** Groups drawn INSIDE the `groups` boxes (#125) — `{ key: [nodeIds] }`, the
+   * same shape, such as a composed estate's `groups.byPipeline` inside its
+   * `groups.byStack`. Each subgroup nests in the `groups` box that holds most
+   * of its members (the first such box on a tie); a member that sits in a
+   * different box, or in none when the subgroup has a box, stays where
+   * `groups` put it rather than being pulled across a boundary. A subgroup
+   * none of whose members is in any box is laid out as a top-level box.
+   *
+   * A subgroup's box carries `depth: 1` and `parent` (its outer box's key) when
+   * it nests, `id` and `title` set to its key. A node may sit in one subgroup.
+   * Absent or empty, the layout is exactly what `groups` alone gives. */
+  subgroups?: Record<string, string[]>;
 }
 
 /** The concept layout also carries its group boxes (empty when ungrouped). */
@@ -50,10 +62,15 @@ function laneEdge(l: EdgeLane, ranksep: number): { minlen?: number } {
   return minlen > 1 ? { minlen } : {};
 }
 
+/** Room between a box's top edge and a box nested in it: the 12px title row
+ * painted at +23 plus clearance. */
+const NEST_GAP = 36;
+
 export function layoutIr(ir: GraphIR, opts: ConceptLayoutOptions = {}): ConceptLayout {
   const sizes = cardSizes(ir, { style: opts.style, overrides: opts.overrides, fit: opts.fit ?? true });
   const groupEntries = Object.entries(opts.groups ?? {}).filter(([, ids]) => ids.length > 0);
-  const compound = groupEntries.length > 0;
+  const subEntries = Object.entries(opts.subgroups ?? {}).filter(([, ids]) => ids.length > 0);
+  const compound = groupEntries.length > 0 || subEntries.length > 0;
 
   const g = new dagre.graphlib.Graph({ multigraph: true, compound });
   g.setGraph({
@@ -82,6 +99,37 @@ export function layoutIr(ir: GraphIR, opts: ConceptLayoutOptions = {}): ConceptL
       if (g.hasNode(id)) g.setParent(id, cid);
     }
   }
+  // Subgroups (#125): a cluster parented to an outer cluster, so dagre lays it
+  // out inside that box. The outer box a node ended up in is read back off the
+  // graph, which is the last group that listed it, as above.
+  const subId = (key: string) => `__sub__:${key}`;
+  const outerOf = (id: string): string | undefined => {
+    const p = g.parent(id);
+    return p === undefined ? undefined : groupEntries.find(([title]) => clusterId(title) === p)?.[0];
+  };
+  const subParent = new Map<string, string | undefined>();
+  const nodeIds = new Set(ir.nodes.map((n) => n.id));
+  for (const [key, ids] of subEntries) {
+    const present = ids.filter((id) => nodeIds.has(id));
+    if (present.length === 0) continue;
+    // The outer box holding most of the present members; the first on a tie.
+    const counts = new Map<string | undefined, number>();
+    for (const id of present) counts.set(outerOf(id), (counts.get(outerOf(id)) ?? 0) + 1);
+    let parent: string | undefined;
+    let best = -1;
+    for (const [outer, count] of counts) if (count > best) { best = count; parent = outer; }
+    const sid = subId(key);
+    g.setNode(sid, { width: 200, height: 90 });
+    if (parent !== undefined) g.setParent(sid, clusterId(parent));
+    for (const id of present) if (outerOf(id) === parent) g.setParent(id, sid);
+    subParent.set(key, parent);
+  }
+  // A nested box's top edge sits one border gap below its outer box's top, and
+  // the outer box's title is painted in that gap. Across ranks (TB/BT) the gap
+  // is half the rank spacing; within a rank (LR/RL) it is dagre's `edgesep`,
+  // 20px by default, which puts the outer title on the inner box's border. Widen
+  // it when anything nests, so the title row has room.
+  if ([...subParent.values()].some((p) => p !== undefined)) g.graph().edgesep = NEST_GAP;
   const lanes = edgeLanes(ir.edges);
   ir.edges.forEach((e, i) => {
     if (g.hasNode(e.from) && g.hasNode(e.to)) g.setEdge(e.from, e.to, laneEdge(lanes[i], opts.ranksep ?? 72), layoutEdgeName(e));
@@ -109,6 +157,19 @@ export function layoutIr(ir: GraphIR, opts: ConceptLayoutOptions = {}): ConceptL
       return b ? { title, id: title, x: b.x, y: height - b.y, w: b.width, h: b.height } : undefined;
     })
     .filter((b): b is GroupBox => b !== undefined);
+  for (const [key, parent] of subParent) {
+    const b = g.node(subId(key)) as { x: number; y: number; width: number; height: number } | undefined;
+    if (!b) continue;
+    groups.push({
+      title: key,
+      id: key,
+      x: b.x,
+      y: height - b.y,
+      w: b.width,
+      h: b.height,
+      ...(parent !== undefined ? { depth: 1, parent } : {}),
+    });
+  }
 
   return { nodes, width: gg.width ?? 0, height, groups };
 }
