@@ -1,5 +1,6 @@
 import dagre from "@dagrejs/dagre";
 import type { GraphIR, Layout } from "./ir.ts";
+import { edgeLanes, layoutEdgeName, type EdgeLane } from "./edges.ts";
 import { cardSizes, statusFor, type NodeStyle, type NodeOverride, type GroupBox } from "./paint/render.ts";
 
 /**
@@ -39,6 +40,16 @@ export interface ConceptLayout extends Layout {
   groups: GroupBox[];
 }
 
+/** dagre's label for an edge. A pair with several lanes (#128) labels each
+ * lane along the stretch between its two cards; when one rank gap can't hold
+ * that many chips (18px tall, plus room), the edge asks dagre for a longer
+ * minimum length so the gap grows. A lone edge gets `{}`, as it always has. */
+function laneEdge(l: EdgeLane, ranksep: number): { minlen?: number } {
+  if (l.lanes < 2) return {};
+  const minlen = Math.ceil((l.lanes * 22 + 8) / ranksep);
+  return minlen > 1 ? { minlen } : {};
+}
+
 export function layoutIr(ir: GraphIR, opts: ConceptLayoutOptions = {}): ConceptLayout {
   const sizes = cardSizes(ir, { style: opts.style, overrides: opts.overrides, fit: opts.fit ?? true });
   const groupEntries = Object.entries(opts.groups ?? {}).filter(([, ids]) => ids.length > 0);
@@ -71,9 +82,10 @@ export function layoutIr(ir: GraphIR, opts: ConceptLayoutOptions = {}): ConceptL
       if (g.hasNode(id)) g.setParent(id, cid);
     }
   }
-  for (const e of ir.edges) {
-    if (g.hasNode(e.from) && g.hasNode(e.to)) g.setEdge(e.from, e.to, {}, `${e.from}->${e.to}`);
-  }
+  const lanes = edgeLanes(ir.edges);
+  ir.edges.forEach((e, i) => {
+    if (g.hasNode(e.from) && g.hasNode(e.to)) g.setEdge(e.from, e.to, laneEdge(lanes[i], opts.ranksep ?? 72), layoutEdgeName(e));
+  });
 
   dagre.layout(g);
 
@@ -160,11 +172,12 @@ export function layoutArchitecture(
     if (g.hasNode(child) && g.hasNode(cId(c))) g.setParent(child, cId(c));
   }
   // Edges connect cards (leaves); references to a container box are skipped.
-  for (const e of ir.edges) {
+  const lanes = edgeLanes(ir.edges);
+  ir.edges.forEach((e, i) => {
     if (leaves.some((n) => n.id === e.from) && leaves.some((n) => n.id === e.to)) {
-      g.setEdge(e.from, e.to, {}, `${e.from}->${e.to}`);
+      g.setEdge(e.from, e.to, laneEdge(lanes[i], opts.ranksep ?? 60), layoutEdgeName(e));
     }
-  }
+  });
 
   dagre.layout(g);
   const gg = g.graph();

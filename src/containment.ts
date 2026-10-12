@@ -24,6 +24,7 @@ import { clip, edgeRelAttrs, esc, glyphMarkup } from "./paint/svg.ts";
 import { defaultPack, type Role, type Focus, type SaliencePack, type Hints } from "./pack.ts";
 import { isImportSocket } from "./compose.ts";
 import type { DiffStatus } from "./diff.ts";
+import { edgeKey } from "./edges.ts";
 
 // The salience taxonomy now lives in a swappable presentation pack (#28); these
 // types are re-exported so existing importers keep working.
@@ -887,7 +888,7 @@ function renderStatesArtifact(
   expandIndex: Record<string, number>,
   metaNodes: Array<{ id: string; kind: string; lexicon: string; attrs?: unknown }>,
   subtitleOf: (id: string) => string | undefined,
-  o: { theme: Theme; title: string; focus: Focus; startState: number; hint: string; denseState: number; diffOf?: (id: string) => string | undefined; labelOf?: (id: string) => string; cardOf?: (id: string) => BoxCard | undefined; edgeDiffOf?: (from: string, to: string) => string | undefined; back?: Record<number, number> },
+  o: { theme: Theme; title: string; focus: Focus; startState: number; hint: string; denseState: number; diffOf?: (id: string) => string | undefined; labelOf?: (id: string) => string; cardOf?: (id: string) => BoxCard | undefined; edgeDiffOf?: (from: string, to: string, kind?: string) => string | undefined; back?: Record<number, number> },
 ): string {
   const { theme, title, focus, startState, hint, denseState, diffOf, labelOf, cardOf, edgeDiffOf } = o;
   const back = o.back ?? {};
@@ -933,7 +934,7 @@ function renderStatesArtifact(
     let edgesHtml = "";
     for (const e of a.depEdges) {
       if (!(e.from in L.X) || !(e.to in L.X)) continue;
-      edgesHtml += depEdgeStr(e.from, e.to, route(e.from, e.to), e.via, e.toAttr, theme, false, e.label, edgeLabelPos(e.from, e.to, L), edgeDiffOf?.(e.from, e.to), e);
+      edgesHtml += depEdgeStr(e.from, e.to, route(e.from, e.to), e.via, e.toAttr, theme, false, e.label, edgeLabelPos(e.from, e.to, L), edgeDiffOf?.(e.from, e.to, e.kind), e);
     }
     for (const e of a.implied) {
       if (!(e.from in L.X) || !(e.to in L.X)) continue;
@@ -1184,7 +1185,8 @@ export function renderTiersApp(composites: GraphIR, members: GraphIR, opts: Cont
     labelOf: (id) => labelMap[id] ?? id,
     cardOf,
     diffOf: diff ? (id) => diff[id] : undefined,
-    edgeDiffOf: opts.diffEdges ? (from, to) => opts.diffEdges![`${from}>${to}`] : undefined,
+    // Diff statuses are keyed by edgeKey, which carries a non-ref kind (#128).
+    edgeDiffOf: opts.diffEdges ? (from, to, kind) => opts.diffEdges![edgeKey({ from, to, kind })] : undefined,
     hint: diff
       ? "diff — green added · blue changed · red removed · dim unchanged · click a changed composite to see what changed"
       : stackId

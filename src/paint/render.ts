@@ -3,6 +3,7 @@ import { getTheme, type Theme } from "../theme.ts";
 import { resolveGlyph, type Glyph, type GlyphSpec } from "../icons.ts";
 import { resolveFields, type Field } from "../labels.ts";
 import { Canvas, statusGround, type Status } from "./svg.ts";
+import { edgeLanes, laneOffset } from "../edges.ts";
 
 const CARD_W = 180;
 const CARD_BASE = 52; // title + sub
@@ -203,26 +204,43 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
     );
   }
 
-  // Edges (connect at layout-point centers) so cards sit on top.
-  for (const e of ir.edges) {
+  // Edges (connect at layout-point centers) so cards sit on top. Two kinds on
+  // one pair (a job that both `needs` and `extends` another — #128) are two
+  // lanes, drawn apart; an edge alone on its pair takes the exact path it
+  // always had.
+  const lanes = edgeLanes(ir.edges);
+  // A node's painted rect, for keeping a parallel lane's label off the cards.
+  const nodeById = new Map(ir.nodes.map((n) => [n.id, n]));
+  const footprintAt = (id: string, p: { cx: number; cy: number }): Rect => {
+    const n = nodeById.get(id);
+    const f = n
+      ? cardFootprint(n, { style, override: opts.overrides?.[id], fit: opts.fit })
+      : { w: 0, h: 0 };
+    return { x: p.cx - f.w / 2, y: p.cy - f.h / 2, w: f.w, h: f.h };
+  };
+  ir.edges.forEach((e, i) => {
     const a = place(e.from);
     const b = place(e.to);
-    if (!a || !b) continue;
+    if (!a || !b) return;
     // Concept edges may carry an optional `style: "dashed"` in the IR JSON
     // (untyped in GraphIR) for optional / secondary relations.
     const dashed = (e as { style?: string }).style === "dashed";
-    c.edge(
-      `M ${a.cx} ${a.cy} C ${a.cx} ${(a.cy + b.cy) / 2}, ${b.cx} ${(a.cy + b.cy) / 2}, ${b.cx} ${b.cy}`,
-      1.4,
-      flow,
-      { from: e.from, to: e.to, via: e.viaAttr, toAttr: e.toAttr, kind: e.kind, cross: e.crossPipeline },
-      dashed,
-    );
+    const rel = { from: e.from, to: e.to, via: e.viaAttr, kind: e.kind, cross: e.crossPipeline };
+    const lane = lanes[i];
+    let d = `M ${a.cx} ${a.cy} C ${a.cx} ${(a.cy + b.cy) / 2}, ${b.cx} ${(a.cy + b.cy) / 2}, ${b.cx} ${b.cy}`;
+    let label = { x: (a.cx + b.cx) / 2, y: (a.cy + b.cy) / 2 };
+    if (lane.lanes > 1) {
+      const lp = lanePath(a, b, laneOffset(lane), lane, [footprintAt(e.from, a), footprintAt(e.to, b)]);
+      d = lp.d;
+      label = lp.label;
+    }
+    c.edge(d, 1.4, flow, { ...rel, toAttr: e.toAttr }, dashed);
     // Draw the relation/branch label on the edge (concept diagrams). Placed at the
     // path midpoint as a chip that cuts across the line, stamped with its edge's
-    // identity (#110) so it is not an anonymous sibling.
-    if (e.viaAttr) c.edgeLabel((a.cx + b.cx) / 2, (a.cy + b.cy) / 2, e.viaAttr, { from: e.from, to: e.to, via: e.viaAttr, kind: e.kind, cross: e.crossPipeline });
-  }
+    // identity (#110) so it is not an anonymous sibling. Parallel lanes stagger
+    // their chips along the edge so two labels never sit on one spot.
+    if (e.viaAttr) c.edgeLabel(label.x, label.y, e.viaAttr, rel);
+  });
 
   for (const node of ir.nodes) {
     const p = place(node.id);
@@ -259,6 +277,64 @@ export function renderSvg(ir: GraphIR, layout: Layout, opts: RenderOptions = {})
   }
 
   return c.toString();
+}
+
+const r1 = (n: number): number => Math.round(n * 10) / 10;
+
+interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+const inRect = (r: Rect, x: number, y: number): boolean =>
+  x > r.x - 4 && x < r.x + r.w + 4 && y > r.y - 4 && y < r.y + r.h + 4;
+
+/** One lane of a parallel pair (#128): the pair's usual bezier shifted `off` px
+ * perpendicular to the line from `a` to `b`, and a point on it for the lane's
+ * label. The labels of a pair are spread evenly over the stretch of curve that
+ * runs between the two cards (sampled, since the curve is a bezier), lane by
+ * lane, so each chip sits on visible line and no two land on one spot. */
+function lanePath(
+  a: { cx: number; cy: number },
+  b: { cx: number; cy: number },
+  off: number,
+  lane: { lane: number; lanes: number },
+  cards: Rect[],
+): { d: string; label: { x: number; y: number } } {
+  const dx = b.cx - a.cx;
+  const dy = b.cy - a.cy;
+  const len = Math.hypot(dx, dy) || 1;
+  const ox = (-dy / len) * off;
+  const oy = (dx / len) * off;
+  const my = (a.cy + b.cy) / 2;
+  const p0 = { x: a.cx + ox, y: a.cy + oy };
+  const p1 = { x: a.cx + ox, y: my + oy };
+  const p2 = { x: b.cx + ox, y: my + oy };
+  const p3 = { x: b.cx + ox, y: b.cy + oy };
+  const at = (t: number): { x: number; y: number } => {
+    const u = 1 - t;
+    const k = (q: "x" | "y"): number => u * u * u * p0[q] + 3 * u * u * t * p1[q] + 3 * u * t * t * p2[q] + t * t * t * p3[q];
+    return { x: k("x"), y: k("y") };
+  };
+  // The visible stretch: the first and last sampled t not under either card.
+  const STEPS = 64;
+  let t0 = 0;
+  let t1 = 1;
+  const clear = (t: number): boolean => {
+    const p = at(t);
+    return !cards.some((r) => inRect(r, p.x, p.y));
+  };
+  for (let i = 0; i <= STEPS; i++) if (clear(i / STEPS)) { t0 = i / STEPS; break; }
+  for (let i = STEPS; i >= 0; i--) if (clear(i / STEPS)) { t1 = i / STEPS; break; }
+  if (t1 <= t0) { t0 = 0; t1 = 1; }
+  const label = at(t0 + ((lane.lane + 1) / (lane.lanes + 1)) * (t1 - t0));
+  const pt = (p: { x: number; y: number }): string => `${r1(p.x)} ${r1(p.y)}`;
+  return {
+    d: `M ${pt(p0)} C ${pt(p1)}, ${pt(p2)}, ${pt(p3)}`,
+    label: { x: r1(label.x), y: r1(label.y) },
+  };
 }
 
 /** A box's `mark` (#119) resolved to paintable geometry, or undefined when the
