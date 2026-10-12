@@ -34,6 +34,11 @@ export interface GroupBox {
   /** Nesting depth (0 = outermost). Boxes draw outer-first so inner boxes and
    * cards sit on top. Absent = flat (depth 0). */
   depth?: number;
+  /** The key (`id`) of the box this one is drawn inside, when a layout nested
+   * it (#125): `layoutIr`'s `subgroups` set it to the outer group's key. Data
+   * only; nothing paints it. A consumer that moves an outer box after layout
+   * moves the boxes that name it as their parent with it. */
+  parent?: string;
   /** Status tint for the box border + title (the card `_status` vocabulary).
    * `layoutArchitecture` sets it from the container node's own `_status` when
    * the container id is a real IR node; callers building boxes by hand set it
