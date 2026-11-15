@@ -29,3 +29,5 @@ jobs:
         run: npm test
       - name: build
         run: npm run build
+      - name: root entry bundles for a browser
+        run: npm run check:browser

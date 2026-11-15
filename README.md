@@ -127,6 +127,15 @@ no node builtins — so a browser bundle can register a pack without pulling the
 CLI's dependencies. It shares a module instance with the package root, so a pack
 registered through it is the pack `renderSvg` paints with.
 
+The package root imports no node builtins either, so `layoutIr`, `renderSvg`
+and the rest of the painter bundle for a browser (`npm run check:browser` is
+the CI step that holds it to that). The chant CLI wrapper, which spawns chant,
+is the `@intentius/pinhole/chant` subpath:
+
+```ts
+import { graphIr, graphLayout, graphFlags, lint } from "@intentius/pinhole/chant";
+```
+
 Node bodies show a few fields from the IR attrs (chosen by a template: per-node
 override → lexicon pack → default scalar attrs). The default **portable** output
 draws them as native SVG text — works as a static image and on GitHub. `--rich`
