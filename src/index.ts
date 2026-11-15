@@ -1,6 +1,8 @@
 export type { GraphIR, IRNode, IREdge, IREdgeKind, IRDanglingRef, IRGroups, IRExport, IRImport, SourceLoc, Layout, Point } from "./ir.ts";
 export { withResourceAttrs } from "./ir.ts";
-export { graphIr, graphLayout, graphFlags, type GraphOptions } from "./chant.ts";
+// The chant CLI wrapper (graphIr, graphLayout, graphFlags, lint) spawns chant,
+// so it lives at the `@intentius/pinhole/chant` subpath. The root entry imports
+// no node builtins and bundles for a browser.
 export {
   type Theme,
   type ThemeTokens,
