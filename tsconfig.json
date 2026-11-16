@@ -11,6 +11,6 @@
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": false
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "ci/**/*", "chant.config.ts"],
   "exclude": ["node_modules", "dist"]
 }
