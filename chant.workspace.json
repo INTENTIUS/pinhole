@@ -9,7 +9,7 @@
   "ci": {
     "green": {
       "branch": "main",
-      "window": "24h",
+      "window": "2h",
       "phases": {
         "check": [
           "check"
