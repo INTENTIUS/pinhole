@@ -1,0 +1,23 @@
+{
+  "name": "pinhole",
+  "schema": 1,
+  "minReader": "0.124.89",
+  "members": [],
+  "security": [
+    "supply-chain"
+  ],
+  "ci": {
+    "green": {
+      "branch": "main",
+      "window": "24h",
+      "phases": {
+        "check": [
+          "check"
+        ]
+      },
+      "require": [
+        "check"
+      ]
+    }
+  }
+}
