@@ -18,6 +18,7 @@ export const workflow = new Workflow({
   name: "ci",
   on: {
     pull_request: {},
+    merge_group: {},
     push: { branches: ["main"] },
   },
   permissions: { contents: "read" },
