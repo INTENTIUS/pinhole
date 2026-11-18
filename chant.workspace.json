@@ -5,19 +5,5 @@
   "members": [],
   "security": [
     "supply-chain"
-  ],
-  "ci": {
-    "green": {
-      "branch": "main",
-      "window": "2h",
-      "phases": {
-        "check": [
-          "check"
-        ]
-      },
-      "require": [
-        "check"
-      ]
-    }
-  }
+  ]
 }
