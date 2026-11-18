@@ -4,10 +4,9 @@ import type { ChantConfig } from "@intentius/chant";
  * pinhole's chant config: the repository's CI workflow (ci/) and its release
  * (CONTRIBUTING.md, Releasing).
  *
- * A person cuts a release from a main commit whose checks passed with
- * `chant release cut <version> --yes` and pushes the v<version> tag.
- * .github/workflows/publish.yml runs on that tag, stamps the version into
- * package.json, builds, and publishes to npm with trusted publishing.
+ * A release is one dispatched run of .github/workflows/publish.yml: it cuts
+ * a main commit whose checks passed, tags it v<version>, stamps the version
+ * into package.json, builds, and publishes to npm with trusted publishing.
  */
 export default {
   lexicons: ["github"],
@@ -31,6 +30,7 @@ export default {
     // commit bumps the version; the committed version stays where it is.
     version: { packages: ["."] },
     workflow: {
+      trigger: "dispatch",
       install: "npm ci",
       build: "npm run build",
       chant: "npx chant",
