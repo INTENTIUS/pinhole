@@ -1,0 +1,1 @@
+{"artifactDigests":[],"commit":"2c974de143dd397bcd03e38b6c328348030efe82","member":null,"releaseDigest":"jcs1-sha256:52eda56b397bfc33fc8f5b6782609166b4d66f4fe7b739aef09cfdc1dd6586ec","targets":[{"env":"npm","params":[],"templates":[{"component":null,"digest":"sha256:44f61aa507d169d11d11c94e5ec423cd34e8b5d227783eb79324b00cfad86496","path":"dist/build.yaml"}]}],"version":1}
