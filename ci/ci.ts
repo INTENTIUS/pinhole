@@ -3,8 +3,8 @@
  *
  * `npm run workflows` renders it into .github/workflows/ci.yml, and the
  * `check` job fails when a committed generated file differs from what its
- * source renders. The `check` job is the phase chant.workspace.json's
- * ci.green requires, so a main commit it passes gets a ci/green/<sha> tag.
+ * source renders. The `check` job is the check main's ruleset requires, and
+ * the release cut (release.green "forge-checks") reads it on the commit.
  * The release cut also compiles this directory (chant.config.ts sourceDir).
  */
 
@@ -22,7 +22,7 @@ export const workflow = new Workflow({
     push: { branches: ["main"] },
   },
   permissions: { contents: "read" },
-  // Every main commit keeps its run, so the green tick can judge each one; a pull request's newer push cancels the older run.
+  // Every main commit keeps its run, so the release cut can judge each one; a pull request's newer push cancels the older run.
   concurrency: { group: "ci-${{ github.ref }}", "cancel-in-progress": "${{ github.ref != 'refs/heads/main' }}" },
 });
 

@@ -4,17 +4,16 @@ import type { ChantConfig } from "@intentius/chant";
  * pinhole's chant config: the repository's CI workflow (ci/) and its release
  * (CONTRIBUTING.md, Releasing).
  *
- * A person cuts a release from the newest green commit with
- * `chant release cut <version> --yes` and pushes the release/<version> tag.
+ * A person cuts a release from a main commit whose checks passed with
+ * `chant release cut <version> --yes` and pushes the v<version> tag.
  * .github/workflows/publish.yml runs on that tag, stamps the version into
  * package.json, builds, and publishes to npm with trusted publishing.
  */
 export default {
   lexicons: ["github"],
 
-  // chant.workspace.json declares no members; it is there for ci.green (the
-  // ci/green tags chant-ci-green.yml writes, which the cut reads), so chant
-  // builds this root project alone.
+  // chant.workspace.json declares no members; it holds the workspace's
+  // security groups, so chant builds this root project alone.
   rootOnly: true,
 
   // What chant builds when no directory is named, and what the release cut
@@ -23,6 +22,11 @@ export default {
 
   environments: ["npm"],
   release: {
+    tag: "v{version}",
+    // Earlier chant releases were tagged release/<version>; chant still reads those as earlier releases.
+    legacyTags: ["release/"],
+    // The cut releases a commit whose check runs on GitHub passed, the ruleset's required `check` among them.
+    green: "forge-checks",
     // The cut and the publish job stamp the label into package.json, so no
     // commit bumps the version; the committed version stays where it is.
     version: { packages: ["."] },

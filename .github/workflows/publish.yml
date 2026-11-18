@@ -2,13 +2,15 @@
 name: chant release publish
 on:
   push:
-    tags: ["release/**"]
+    tags: ["v*"]
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -19,8 +21,14 @@ jobs:
           registry-url: https://registry.npmjs.org
       - run: npm ci
       - run: "have=\"$(npm --version)\"; if [ \"$(printf '%s\\n' \"11.5.1\" \"$have\" | sort -V | head -n1)\" != \"11.5.1\" ]; then npm install -g npm@11.19.0; fi; npm --version"
-      - run: npx chant release stamp "${GITHUB_REF_NAME#release/}"
+      - run: git fetch origin chant/lifecycle:chant/lifecycle
+      - id: label
+        run: |
+          label="$(npx chant release tag "$GITHUB_REF_NAME" --json | node -e 'const f=process.argv[1];const t=f?require("fs").readFileSync(f,"utf8"):require("fs").readFileSync(0,"utf8");const d=JSON.parse(t);process.stdout.write(String(d.label??""))')" || label=""
+          if [ -z "$label" ]; then echo "$GITHUB_REF_NAME names no release of this member, so nothing is published" >&2; exit 1; fi
+          echo "CHANT_RELEASE_LABEL=$label" >> "$GITHUB_ENV"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+      - run: npx chant release stamp "$CHANT_RELEASE_LABEL"
       - run: npm run build
       - run: git fetch origin 'refs/tags/ci/*:refs/tags/ci/*'
-      - run: git fetch origin chant/lifecycle:chant/lifecycle
-      - run: npx chant release publish "${GITHUB_REF_NAME#release/}" --require-provenance --yes
+      - run: npx chant release publish "$CHANT_RELEASE_LABEL" --require-provenance --yes
